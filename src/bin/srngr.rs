@@ -23,7 +23,9 @@ fn main() {
             "--stdout" => stdout = true,
             "--viewport" => {
                 let value = required_value(&mut args, &argument);
-                let Some((width, height)) = value.split_once('x') else { fail("--viewport must use WIDTHxHEIGHT"); };
+                let Some((width, height)) = value.split_once('x') else {
+                    fail("--viewport must use WIDTHxHEIGHT");
+                };
                 options.viewport_width = parse_positive(width, "viewport width");
                 options.viewport_height = parse_positive(height, "viewport height");
             }
@@ -34,16 +36,28 @@ fn main() {
     }
 
     let scene = execute_file(&input, &options).unwrap_or_else(|error| fail(&error.to_string()));
-    let json = scene.to_json_pretty().unwrap_or_else(|error| fail(&error.to_string()));
+    let json = scene
+        .to_json_pretty()
+        .unwrap_or_else(|error| fail(&error.to_string()));
     for diagnostic in &scene.diagnostics {
-        eprintln!("{}:{}:{}: {}[{}]: {}", diagnostic.source, diagnostic.line, diagnostic.column, diagnostic.severity, diagnostic.code, diagnostic.message);
+        eprintln!(
+            "{}:{}:{}: {}[{}]: {}",
+            diagnostic.source,
+            diagnostic.line,
+            diagnostic.column,
+            diagnostic.severity,
+            diagnostic.code,
+            diagnostic.message
+        );
     }
 
     if stdout {
         println!("{json}");
     } else {
         let path = output.unwrap_or_else(|| PathBuf::from(format!("{input}.scene.json")));
-        fs::write(&path, json).unwrap_or_else(|error| fail(&format!("could not write `{}`: {error}", path.display())));
+        fs::write(&path, json).unwrap_or_else(|error| {
+            fail(&format!("could not write `{}`: {error}", path.display()))
+        });
         println!("ran {} -> {}", input, path.display());
     }
 
@@ -53,11 +67,15 @@ fn main() {
 }
 
 fn required_value(args: &mut impl Iterator<Item = String>, option: &str) -> String {
-    args.next().unwrap_or_else(|| fail(&format!("expected a value after {option}")))
+    args.next()
+        .unwrap_or_else(|| fail(&format!("expected a value after {option}")))
 }
 
 fn parse_positive(value: &str, label: &str) -> f64 {
-    value.parse::<f64>().ok().filter(|number| number.is_finite() && *number > 0.0)
+    value
+        .parse::<f64>()
+        .ok()
+        .filter(|number| number.is_finite() && *number > 0.0)
         .unwrap_or_else(|| fail(&format!("{label} must be a positive number")))
 }
 

@@ -28,7 +28,10 @@ impl Default for RuntimeOptions {
 
 #[derive(Debug)]
 pub enum RuntimeError {
-    Io { path: PathBuf, source: std::io::Error },
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     InvalidIr(String),
 }
 
@@ -59,11 +62,14 @@ pub struct Scene {
 
 impl Scene {
     pub fn has_errors(&self) -> bool {
-        self.diagnostics.iter().any(|diagnostic| diagnostic.severity == "error")
+        self.diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == "error")
     }
 
     pub fn to_json_pretty(&self) -> Result<String, RuntimeError> {
-        serde_json::to_string_pretty(self).map_err(|error| RuntimeError::InvalidIr(error.to_string()))
+        serde_json::to_string_pretty(self)
+            .map_err(|error| RuntimeError::InvalidIr(error.to_string()))
     }
 }
 
@@ -164,9 +170,15 @@ pub fn execute_json(ir_json: &str, options: &RuntimeOptions) -> Result<Scene, Ru
     execute_json_from(ir_json, None, options)
 }
 
-pub fn execute_file(path: impl AsRef<Path>, options: &RuntimeOptions) -> Result<Scene, RuntimeError> {
+pub fn execute_file(
+    path: impl AsRef<Path>,
+    options: &RuntimeOptions,
+) -> Result<Scene, RuntimeError> {
     let path = path.as_ref();
-    let text = fs::read_to_string(path).map_err(|source| RuntimeError::Io { path: path.to_path_buf(), source })?;
+    let text = fs::read_to_string(path).map_err(|source| RuntimeError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
     let ir_json = if path.extension().and_then(|value| value.to_str()) == Some("srng") {
         crate::compile_to_json(&text, &path.to_string_lossy())
     } else {
@@ -175,22 +187,34 @@ pub fn execute_file(path: impl AsRef<Path>, options: &RuntimeOptions) -> Result<
     execute_json_from(&ir_json, Some(path), options)
 }
 
-fn execute_json_from(ir_json: &str, input_path: Option<&Path>, options: &RuntimeOptions) -> Result<Scene, RuntimeError> {
+fn execute_json_from(
+    ir_json: &str,
+    input_path: Option<&Path>,
+    options: &RuntimeOptions,
+) -> Result<Scene, RuntimeError> {
     validate_options(options)?;
-    let ir: IrDocument = serde_json::from_str(ir_json).map_err(|error| RuntimeError::InvalidIr(error.to_string()))?;
+    let ir: IrDocument = serde_json::from_str(ir_json)
+        .map_err(|error| RuntimeError::InvalidIr(error.to_string()))?;
     if ir.format != "SRNG-IR" {
-        return Err(RuntimeError::InvalidIr(format!("expected format `SRNG-IR`, found `{}`", ir.format)));
+        return Err(RuntimeError::InvalidIr(format!(
+            "expected format `SRNG-IR`, found `{}`",
+            ir.format
+        )));
     }
 
-    let mut diagnostics = ir.diagnostics.iter().map(|diagnostic| RuntimeDiagnostic {
-        severity: diagnostic.severity.clone(),
-        code: diagnostic.code.clone(),
-        message: diagnostic.message.clone(),
-        source: ir.source.clone(),
-        declaration: None,
-        line: diagnostic.line,
-        column: diagnostic.column,
-    }).collect::<Vec<_>>();
+    let mut diagnostics = ir
+        .diagnostics
+        .iter()
+        .map(|diagnostic| RuntimeDiagnostic {
+            severity: diagnostic.severity.clone(),
+            code: diagnostic.code.clone(),
+            message: diagnostic.message.clone(),
+            source: ir.source.clone(),
+            declaration: None,
+            line: diagnostic.line,
+            column: diagnostic.column,
+        })
+        .collect::<Vec<_>>();
 
     let units = collect_units(&ir.declarations, &ir.source, &mut diagnostics);
     let mut nodes = Vec::new();
@@ -202,7 +226,9 @@ fn execute_json_from(ir_json: &str, input_path: Option<&Path>, options: &Runtime
         match string_field(declaration, "type").unwrap_or("") {
             "unit" => {}
             "node" => {
-                if let Some(node) = build_node(declaration, &ir.source, &units, options, &mut diagnostics) {
+                if let Some(node) =
+                    build_node(declaration, &ir.source, &units, options, &mut diagnostics)
+                {
                     nodes.push(node);
                 }
             }
@@ -217,7 +243,9 @@ fn execute_json_from(ir_json: &str, input_path: Option<&Path>, options: &Runtime
                 });
             }
             "reference" => {
-                if let Some(reference) = build_reference(declaration, &ir.source, &units, options, &mut diagnostics) {
+                if let Some(reference) =
+                    build_reference(declaration, &ir.source, &units, options, &mut diagnostics)
+                {
                     references.push(reference);
                 }
             }
@@ -230,30 +258,54 @@ fn execute_json_from(ir_json: &str, input_path: Option<&Path>, options: &Runtime
                 });
             }
             unknown => diagnostics.push(runtime_diagnostic(
-                "warning", "R101", format!("ignored unknown declaration type `{unknown}`"), &ir.source, None,
+                "warning",
+                "R101",
+                format!("ignored unknown declaration type `{unknown}`"),
+                &ir.source,
+                None,
             )),
         }
     }
 
-    let active_ids = nodes.iter().filter(|node| node.active).map(|node| node.id.as_str())
+    let active_ids = nodes
+        .iter()
+        .filter(|node| node.active)
+        .map(|node| node.id.as_str())
         .chain(references.iter().map(|reference| reference.id.as_str()))
         .collect::<HashSet<_>>();
     for relation in &mut relations {
-        relation.active = active_ids.contains(relation.from.as_str()) && active_ids.contains(relation.to.as_str());
+        relation.active = active_ids.contains(relation.from.as_str())
+            && active_ids.contains(relation.to.as_str());
         if !relation.active {
             diagnostics.push(runtime_diagnostic(
-                "error", "R210", format!("relation `{} -> {}` has an inactive or missing endpoint", relation.from, relation.to),
-                &ir.source, Some(format!("{} -> {}", relation.from, relation.to)),
+                "error",
+                "R210",
+                format!(
+                    "relation `{} -> {}` has an inactive or missing endpoint",
+                    relation.from, relation.to
+                ),
+                &ir.source,
+                Some(format!("{} -> {}", relation.from, relation.to)),
             ));
         }
     }
 
     if options.resolve_references {
-        let base_dir = input_path.and_then(Path::parent).unwrap_or_else(|| Path::new("."));
+        let base_dir = input_path
+            .and_then(Path::parent)
+            .unwrap_or_else(|| Path::new("."));
         let local_targets = collect_local_targets(&ir.declarations);
         let mut stack = HashSet::new();
         for reference in &mut references {
-            resolve_reference(reference, base_dir, &local_targets, options, 0, &mut stack, &mut diagnostics);
+            resolve_reference(
+                reference,
+                base_dir,
+                &local_targets,
+                options,
+                0,
+                &mut stack,
+                &mut diagnostics,
+            );
         }
     }
 
@@ -262,7 +314,11 @@ fn execute_json_from(ir_json: &str, input_path: Option<&Path>, options: &Runtime
         version: ir.version,
         source: ir.source,
         file_id: ir.file_id,
-        viewport: Viewport { width: options.viewport_width, height: options.viewport_height, dpi: options.dpi },
+        viewport: Viewport {
+            width: options.viewport_width,
+            height: options.viewport_height,
+            dpi: options.dpi,
+        },
         nodes,
         relations,
         references,
@@ -272,24 +328,53 @@ fn execute_json_from(ir_json: &str, input_path: Option<&Path>, options: &Runtime
 }
 
 fn validate_options(options: &RuntimeOptions) -> Result<(), RuntimeError> {
-    if !options.viewport_width.is_finite() || options.viewport_width <= 0.0 ||
-       !options.viewport_height.is_finite() || options.viewport_height <= 0.0 ||
-       !options.dpi.is_finite() || options.dpi <= 0.0 {
-        return Err(RuntimeError::InvalidIr("viewport dimensions and DPI must be finite positive numbers".to_string()));
+    if !options.viewport_width.is_finite()
+        || options.viewport_width <= 0.0
+        || !options.viewport_height.is_finite()
+        || options.viewport_height <= 0.0
+        || !options.dpi.is_finite()
+        || options.dpi <= 0.0
+    {
+        return Err(RuntimeError::InvalidIr(
+            "viewport dimensions and DPI must be finite positive numbers".to_string(),
+        ));
     }
     Ok(())
 }
 
-fn collect_units(declarations: &[Value], source: &str, diagnostics: &mut Vec<RuntimeDiagnostic>) -> HashMap<String, UnitDefinition> {
+fn collect_units(
+    declarations: &[Value],
+    source: &str,
+    diagnostics: &mut Vec<RuntimeDiagnostic>,
+) -> HashMap<String, UnitDefinition> {
     let mut units = HashMap::new();
-    for declaration in declarations.iter().filter(|value| string_field(value, "type") == Some("unit")) {
-        let Some(name) = string_field(declaration, "name") else { continue };
-        let Some(scale) = declaration.get("scale").and_then(Value::as_f64) else {
-            diagnostics.push(runtime_diagnostic("error", "R120", format!("unit `{name}` has an invalid scale"), source, Some(name.to_string())));
+    for declaration in declarations
+        .iter()
+        .filter(|value| string_field(value, "type") == Some("unit"))
+    {
+        let Some(name) = string_field(declaration, "name") else {
             continue;
         };
-        let Some(base) = string_field(declaration, "base") else { continue };
-        units.insert(name.to_string(), UnitDefinition { scale, base: base.to_string() });
+        let Some(scale) = declaration.get("scale").and_then(Value::as_f64) else {
+            diagnostics.push(runtime_diagnostic(
+                "error",
+                "R120",
+                format!("unit `{name}` has an invalid scale"),
+                source,
+                Some(name.to_string()),
+            ));
+            continue;
+        };
+        let Some(base) = string_field(declaration, "base") else {
+            continue;
+        };
+        units.insert(
+            name.to_string(),
+            UnitDefinition {
+                scale,
+                base: base.to_string(),
+            },
+        );
     }
     units
 }
@@ -302,22 +387,39 @@ fn build_node(
     diagnostics: &mut Vec<RuntimeDiagnostic>,
 ) -> Option<SceneNode> {
     let id = string_field(declaration, "id")?.to_string();
-    let kind = string_field(declaration, "kind").unwrap_or("unknown").to_string();
+    let kind = string_field(declaration, "kind")
+        .unwrap_or("unknown")
+        .to_string();
     let values = properties(declaration);
     let mut geometry = Geometry::default();
     let mut active = true;
 
     match values.get("position") {
         Some(value) => match resolve_pair(value, Axis::Position, units, options) {
-            Ok((x, y)) => { geometry.x = Some(x); geometry.y = Some(y); }
+            Ok((x, y)) => {
+                geometry.x = Some(x);
+                geometry.y = Some(y);
+            }
             Err(message) => {
                 active = false;
-                diagnostics.push(runtime_diagnostic("error", "R200", message, source, Some(id.clone())));
+                diagnostics.push(runtime_diagnostic(
+                    "error",
+                    "R200",
+                    message,
+                    source,
+                    Some(id.clone()),
+                ));
             }
         },
         None => {
             active = false;
-            diagnostics.push(runtime_diagnostic("error", "R201", format!("node `{id}` cannot run without an explicit position"), source, Some(id.clone())));
+            diagnostics.push(runtime_diagnostic(
+                "error",
+                "R201",
+                format!("node `{id}` cannot run without an explicit position"),
+                source,
+                Some(id.clone()),
+            ));
         }
     }
 
@@ -329,16 +431,35 @@ fn build_node(
             }
             Ok(_) => {
                 active = false;
-                diagnostics.push(runtime_diagnostic("error", "R202", format!("node `{id}` has a negative size"), source, Some(id.clone())));
+                diagnostics.push(runtime_diagnostic(
+                    "error",
+                    "R202",
+                    format!("node `{id}` has a negative size"),
+                    source,
+                    Some(id.clone()),
+                ));
             }
             Err(message) => {
                 active = false;
-                diagnostics.push(runtime_diagnostic("error", "R203", message, source, Some(id.clone())));
+                diagnostics.push(runtime_diagnostic(
+                    "error",
+                    "R203",
+                    message,
+                    source,
+                    Some(id.clone()),
+                ));
             }
         }
     }
 
-    Some(SceneNode { id, kind, source: source.to_string(), properties: values, geometry, active })
+    Some(SceneNode {
+        id,
+        kind,
+        source: source.to_string(),
+        properties: values,
+        geometry,
+        active,
+    })
 }
 
 fn build_reference(
@@ -350,20 +471,40 @@ fn build_reference(
 ) -> Option<SceneReference> {
     let id = string_field(declaration, "id")?.to_string();
     let target = string_field(declaration, "target").unwrap_or("");
-    let source_file = string_field(declaration, "source_file").unwrap_or_else(|| target.rsplit_once('#').map_or(target, |value| value.0));
-    let target_id = string_field(declaration, "target_id").unwrap_or_else(|| target.rsplit_once('#').map_or("", |value| value.1));
+    let source_file = string_field(declaration, "source_file")
+        .unwrap_or_else(|| target.rsplit_once('#').map_or(target, |value| value.0));
+    let target_id = string_field(declaration, "target_id")
+        .unwrap_or_else(|| target.rsplit_once('#').map_or("", |value| value.1));
     let values = properties(declaration);
     let mut geometry = Geometry::default();
     if let Some(value) = values.get("position") {
         match resolve_pair(value, Axis::Position, units, options) {
-            Ok((x, y)) => { geometry.x = Some(x); geometry.y = Some(y); }
-            Err(message) => diagnostics.push(runtime_diagnostic("error", "R220", message, source, Some(id.clone()))),
+            Ok((x, y)) => {
+                geometry.x = Some(x);
+                geometry.y = Some(y);
+            }
+            Err(message) => diagnostics.push(runtime_diagnostic(
+                "error",
+                "R220",
+                message,
+                source,
+                Some(id.clone()),
+            )),
         }
     }
     if let Some(value) = values.get("size") {
         match resolve_pair(value, Axis::Size, units, options) {
-            Ok((width, height)) => { geometry.width = Some(width); geometry.height = Some(height); }
-            Err(message) => diagnostics.push(runtime_diagnostic("error", "R221", message, source, Some(id.clone()))),
+            Ok((width, height)) => {
+                geometry.width = Some(width);
+                geometry.height = Some(height);
+            }
+            Err(message) => diagnostics.push(runtime_diagnostic(
+                "error",
+                "R221",
+                message,
+                source,
+                Some(id.clone()),
+            )),
         }
     }
     Some(SceneReference {
@@ -379,15 +520,40 @@ fn build_reference(
 }
 
 #[derive(Clone, Copy)]
-enum Axis { Position, Size }
+enum Axis {
+    Position,
+    Size,
+}
 
-fn resolve_pair(value: &str, axis: Axis, units: &HashMap<String, UnitDefinition>, options: &RuntimeOptions) -> Result<(f64, f64), String> {
+fn resolve_pair(
+    value: &str,
+    axis: Axis,
+    units: &HashMap<String, UnitDefinition>,
+    options: &RuntimeOptions,
+) -> Result<(f64, f64), String> {
     let lengths = parse_lengths(value)?;
     if lengths.len() != 2 {
-        return Err(format!("expected two lengths, found {} in `{value}`", lengths.len()));
+        return Err(format!(
+            "expected two lengths, found {} in `{value}`",
+            lengths.len()
+        ));
     }
-    let x = resolve_length(lengths[0].0, &lengths[0].1, true, units, options, &mut HashSet::new())?;
-    let y = resolve_length(lengths[1].0, &lengths[1].1, false, units, options, &mut HashSet::new())?;
+    let x = resolve_length(
+        lengths[0].0,
+        &lengths[0].1,
+        true,
+        units,
+        options,
+        &mut HashSet::new(),
+    )?;
+    let y = resolve_length(
+        lengths[1].0,
+        &lengths[1].1,
+        false,
+        units,
+        options,
+        &mut HashSet::new(),
+    )?;
     if matches!(axis, Axis::Size) && (!x.is_finite() || !y.is_finite()) {
         return Err(format!("size is not finite in `{value}`"));
     }
@@ -400,14 +566,34 @@ fn parse_lengths(value: &str) -> Result<Vec<(f64, String)>, String> {
     let mut index = 0;
     while index < parts.len() {
         if let Ok(number) = parts[index].parse::<f64>() {
-            let unit = parts.get(index + 1).filter(|next| next.parse::<f64>().is_err()).copied().unwrap_or("px");
-            index += if unit == "px" && parts.get(index + 1).is_none() { 1 } else if parts.get(index + 1).is_some_and(|next| next.parse::<f64>().is_err()) { 2 } else { 1 };
+            let unit = parts
+                .get(index + 1)
+                .filter(|next| next.parse::<f64>().is_err())
+                .copied()
+                .unwrap_or("px");
+            index += if unit == "px" && parts.get(index + 1).is_none() {
+                1
+            } else if parts
+                .get(index + 1)
+                .is_some_and(|next| next.parse::<f64>().is_err())
+            {
+                2
+            } else {
+                1
+            };
             output.push((number, unit.to_string()));
             continue;
         }
-        let split_at = parts[index].char_indices().find(|(_, ch)| !matches!(ch, '0'..='9' | '-' | '+' | '.' | 'e' | 'E')).map(|(position, _)| position);
-        let Some(split_at) = split_at else { return Err(format!("invalid length `{}`", parts[index])); };
-        let number = parts[index][..split_at].parse::<f64>().map_err(|_| format!("invalid length `{}`", parts[index]))?;
+        let split_at = parts[index]
+            .char_indices()
+            .find(|(_, ch)| !matches!(ch, '0'..='9' | '-' | '+' | '.' | 'e' | 'E'))
+            .map(|(position, _)| position);
+        let Some(split_at) = split_at else {
+            return Err(format!("invalid length `{}`", parts[index]));
+        };
+        let number = parts[index][..split_at]
+            .parse::<f64>()
+            .map_err(|_| format!("invalid length `{}`", parts[index]))?;
         output.push((number, parts[index][split_at..].to_string()));
         index += 1;
     }
@@ -430,19 +616,38 @@ fn resolve_length(
         "mm" => options.dpi / 25.4,
         "vw" => options.viewport_width / 100.0,
         "vh" => options.viewport_height / 100.0,
-        "%" => if horizontal { options.viewport_width / 100.0 } else { options.viewport_height / 100.0 },
+        "%" => {
+            if horizontal {
+                options.viewport_width / 100.0
+            } else {
+                options.viewport_height / 100.0
+            }
+        }
         custom => {
             if !visiting.insert(custom.to_string()) {
                 return Err(format!("cyclic custom unit `{custom}`"));
             }
-            let definition = units.get(custom).ok_or_else(|| format!("unknown unit `{custom}`"))?;
-            let base = resolve_length(definition.scale, &definition.base, horizontal, units, options, visiting)?;
+            let definition = units
+                .get(custom)
+                .ok_or_else(|| format!("unknown unit `{custom}`"))?;
+            let base = resolve_length(
+                definition.scale,
+                &definition.base,
+                horizontal,
+                units,
+                options,
+                visiting,
+            )?;
             visiting.remove(custom);
             base
         }
     };
     let result = value * factor;
-    if result.is_finite() { Ok(result) } else { Err(format!("length `{value}{unit}` is not finite")) }
+    if result.is_finite() {
+        Ok(result)
+    } else {
+        Err(format!("length `{value}{unit}` is not finite"))
+    }
 }
 
 fn resolve_reference(
@@ -451,11 +656,17 @@ fn resolve_reference(
     local_targets: &HashMap<String, String>,
     options: &RuntimeOptions,
     depth: usize,
-    stack: &mut HashSet<PathBuf>,
+    stack: &mut HashSet<String>,
     diagnostics: &mut Vec<RuntimeDiagnostic>,
 ) {
     if reference.target_id.is_empty() {
-        diagnostics.push(runtime_diagnostic("error", "R230", format!("reference `{}` has no target id", reference.id), &reference.provenance, Some(reference.id.clone())));
+        diagnostics.push(runtime_diagnostic(
+            "error",
+            "R230",
+            format!("reference `{}` has no target id", reference.id),
+            &reference.provenance,
+            Some(reference.id.clone()),
+        ));
         return;
     }
     if reference.source_file.is_empty() || reference.source_file == "." {
@@ -463,41 +674,138 @@ fn resolve_reference(
             reference.resolved = true;
             reference.resolved_kind = Some(kind.clone());
         } else {
-            diagnostics.push(runtime_diagnostic("error", "R231", format!("reference `{}` cannot find local target `{}`", reference.id, reference.target_id), &reference.provenance, Some(reference.id.clone())));
+            diagnostics.push(runtime_diagnostic(
+                "error",
+                "R231",
+                format!(
+                    "reference `{}` cannot find local target `{}`",
+                    reference.id, reference.target_id
+                ),
+                &reference.provenance,
+                Some(reference.id.clone()),
+            ));
         }
         return;
     }
     if depth >= options.max_reference_depth {
-        diagnostics.push(runtime_diagnostic("error", "R232", format!("reference depth exceeded for `{}`", reference.id), &reference.provenance, Some(reference.id.clone())));
+        diagnostics.push(runtime_diagnostic(
+            "error",
+            "R232",
+            format!("reference depth exceeded for `{}`", reference.id),
+            &reference.provenance,
+            Some(reference.id.clone()),
+        ));
         return;
     }
     if reference.source_file.contains("://") {
-        diagnostics.push(runtime_diagnostic("error", "R233", "network references are not supported by the local runtime".to_string(), &reference.provenance, Some(reference.id.clone())));
+        diagnostics.push(runtime_diagnostic(
+            "error",
+            "R233",
+            "network references are not supported by the local runtime".to_string(),
+            &reference.provenance,
+            Some(reference.id.clone()),
+        ));
         return;
     }
 
     let path = base_dir.join(&reference.source_file);
-    let identity = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-    if !stack.insert(identity.clone()) {
-        diagnostics.push(runtime_diagnostic("error", "R234", format!("cyclic reference through `{}`", path.display()), &reference.provenance, Some(reference.id.clone())));
-        return;
-    }
-    let result = load_ir_document(&path).and_then(|document| {
-        let targets = collect_local_targets(&document.declarations);
-        targets.get(&reference.target_id).cloned().ok_or_else(|| RuntimeError::InvalidIr(format!("target `{}` does not exist in `{}`", reference.target_id, path.display())))
-    });
-    stack.remove(&identity);
+    let result = resolve_external_target(&path, &reference.target_id, options, depth + 1, stack);
     match result {
         Ok(kind) => {
             reference.resolved = true;
             reference.resolved_kind = Some(kind);
         }
-        Err(error) => diagnostics.push(runtime_diagnostic("error", "R235", error.to_string(), &reference.provenance, Some(reference.id.clone()))),
+        Err(error) => diagnostics.push(runtime_diagnostic(
+            "error",
+            "R235",
+            error.to_string(),
+            &reference.provenance,
+            Some(reference.id.clone()),
+        )),
     }
 }
 
+fn resolve_external_target(
+    path: &Path,
+    target_id: &str,
+    options: &RuntimeOptions,
+    depth: usize,
+    stack: &mut HashSet<String>,
+) -> Result<String, RuntimeError> {
+    if depth > options.max_reference_depth {
+        return Err(RuntimeError::InvalidIr(format!(
+            "reference depth exceeded while resolving `{target_id}`"
+        )));
+    }
+
+    let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let identity = format!("{}#{target_id}", canonical.display());
+    if !stack.insert(identity.clone()) {
+        return Err(RuntimeError::InvalidIr(format!(
+            "cyclic reference through `{identity}`"
+        )));
+    }
+
+    let result = (|| {
+        let document = load_ir_document(path)?;
+        let declaration = document
+            .declarations
+            .iter()
+            .find(|value| string_field(value, "id") == Some(target_id))
+            .ok_or_else(|| {
+                RuntimeError::InvalidIr(format!(
+                    "target `{target_id}` does not exist in `{}`",
+                    path.display()
+                ))
+            })?;
+
+        match string_field(declaration, "type") {
+            Some("node") => Ok(string_field(declaration, "kind")
+                .unwrap_or("unknown")
+                .to_string()),
+            Some("reference") => {
+                let target = string_field(declaration, "target").unwrap_or("");
+                let source_file = string_field(declaration, "source_file")
+                    .unwrap_or_else(|| target.rsplit_once('#').map_or(target, |value| value.0));
+                let nested_id = string_field(declaration, "target_id")
+                    .unwrap_or_else(|| target.rsplit_once('#').map_or("", |value| value.1));
+                if nested_id.is_empty() {
+                    return Err(RuntimeError::InvalidIr(format!(
+                        "reference `{target_id}` in `{}` has no target id",
+                        path.display()
+                    )));
+                }
+                if source_file.contains("://") {
+                    return Err(RuntimeError::InvalidIr(
+                        "network references are not supported by the local runtime".to_string(),
+                    ));
+                }
+                let nested_path = if source_file.is_empty() || source_file == "." {
+                    path.to_path_buf()
+                } else {
+                    path.parent()
+                        .unwrap_or_else(|| Path::new("."))
+                        .join(source_file)
+                };
+                resolve_external_target(&nested_path, nested_id, options, depth + 1, stack)
+            }
+            other => Err(RuntimeError::InvalidIr(format!(
+                "target `{target_id}` in `{}` is not a node or reference (found {:?})",
+                path.display(),
+                other
+            ))),
+        }
+    })();
+
+    stack.remove(&identity);
+    result
+}
+
 fn load_ir_document(path: &Path) -> Result<IrDocument, RuntimeError> {
-    let text = fs::read_to_string(path).map_err(|source| RuntimeError::Io { path: path.to_path_buf(), source })?;
+    let text = fs::read_to_string(path).map_err(|source| RuntimeError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
     let json = if path.extension().and_then(|value| value.to_str()) == Some("srng") {
         crate::compile_to_json(&text, &path.to_string_lossy())
     } else {
@@ -507,19 +815,35 @@ fn load_ir_document(path: &Path) -> Result<IrDocument, RuntimeError> {
 }
 
 fn collect_local_targets(declarations: &[Value]) -> HashMap<String, String> {
-    declarations.iter().filter_map(|value| {
-        match string_field(value, "type")? {
-            "node" => Some((string_field(value, "id")?.to_string(), string_field(value, "kind").unwrap_or("unknown").to_string())),
-            "reference" => Some((string_field(value, "id")?.to_string(), "reference".to_string())),
+    declarations
+        .iter()
+        .filter_map(|value| match string_field(value, "type")? {
+            "node" => Some((
+                string_field(value, "id")?.to_string(),
+                string_field(value, "kind").unwrap_or("unknown").to_string(),
+            )),
+            "reference" => Some((
+                string_field(value, "id")?.to_string(),
+                "reference".to_string(),
+            )),
             _ => None,
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 fn properties(value: &Value) -> BTreeMap<String, String> {
-    value.get("properties").and_then(Value::as_object).map(|object| {
-        object.iter().filter_map(|(key, value)| value.as_str().map(|value| (key.clone(), value.to_string()))).collect()
-    }).unwrap_or_default()
+    value
+        .get("properties")
+        .and_then(Value::as_object)
+        .map(|object| {
+            object
+                .iter()
+                .filter_map(|(key, value)| {
+                    value.as_str().map(|value| (key.clone(), value.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn string_field<'a>(value: &'a Value, name: &str) -> Option<&'a str> {
@@ -527,7 +851,11 @@ fn string_field<'a>(value: &'a Value, name: &str) -> Option<&'a str> {
 }
 
 fn unquote(value: &str) -> String {
-    value.strip_prefix('"').and_then(|value| value.strip_suffix('"')).unwrap_or(value).to_string()
+    value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(value)
+        .to_string()
 }
 
 fn runtime_diagnostic(
