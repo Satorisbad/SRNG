@@ -23,7 +23,7 @@ cargo test
 Install `srngc` for the current user:
 
 ```bash
-./scripts/install.sh
+sh scripts/install.sh
 ```
 
 The installed binary is normally available as `~/.cargo/bin/srngc`. Ensure `~/.cargo/bin` is in `PATH`.
@@ -39,7 +39,7 @@ Install Rust with rustup, then build normally:
 ```bash
 cargo build --release
 cargo test
-./scripts/install.sh
+sh scripts/install.sh
 ```
 
 Native Apple Silicon builds use `aarch64-apple-darwin`. Intel macOS builds use `x86_64-apple-darwin`.
