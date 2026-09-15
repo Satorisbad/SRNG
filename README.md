@@ -2,7 +2,7 @@
 
 SRNG is a relationship-first vector format intended as a programmable alternative to SVG.
 
-This repository contains the first reference compiler, `srngc`, written in Rust.
+This repository contains the first reference compiler, `srngc`, and runtime, `srngr`, written in Rust.
 
 ## What v0.1 supports
 
@@ -66,3 +66,13 @@ cargo test
 ```
 
 See [`docs/SPEC.md`](docs/SPEC.md) for the v0.1 compiler surface.
+
+## Runtime
+
+The runtime consumes compiler IR and produces a resolved, renderer-neutral scene:
+
+```bash
+cargo run --bin srngr -- examples/basic.srng --stdout
+```
+
+It resolves units, geometry, relationships, and cross-file references while preserving diagnostics and reference provenance. It does not draw pixels; the renderer is the next layer. See [`docs/RUNTIME.md`](docs/RUNTIME.md).
