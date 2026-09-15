@@ -1,0 +1,30 @@
+srng 0.1;
+file "example.basic";
+
+unit gu = 8 px;
+
+rect card {
+    position: 64px 64px;
+    size: 520px 320px;
+    fill: #ffffff;
+}
+
+text title {
+    position: 96px 104px;
+    content: "SRNG";
+}
+
+relation card -> title {
+    kind: contains;
+    gap: 4gu;
+}
+
+reference logo = "./brand.srng#logo" {
+    mode: reference-only;
+    position: 460px 104px;
+    fit: clip;
+}
+
+animation hover {
+    reference: "./animations.srng#card-hover";
+}

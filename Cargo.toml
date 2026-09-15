@@ -1,0 +1,16 @@
+[package]
+name = "srng"
+version = "0.1.0"
+edition = "2021"
+description = "First reference compiler for the SRNG vector format"
+license = "Apache-2.0"
+
+[lib]
+name = "srng"
+path = "src/lib.rs"
+
+[[bin]]
+name = "srngc"
+path = "src/main.rs"
+
+[dependencies]
