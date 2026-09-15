@@ -1,4 +1,3 @@
 /target/
-Cargo.lock
 *.srng.json
 .DS_Store
