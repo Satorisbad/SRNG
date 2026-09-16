@@ -119,6 +119,17 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
             }
         }
 
+        let mask_svg = match svg_mask_svg(&props, &defs_xml, &geometry, width, height) {
+            Ok(mask) => mask,
+            Err(message) => {
+                diagnostics.push(diag("error", "G223", message, id));
+                None
+            }
+        };
+        if let Some(svg) = mask_svg.as_ref() {
+            commands.push(Command::PushMaskSvg { svg: svg.clone() });
+        }
+
         match svg_pattern_paint(&props, &defs_xml) {
             Ok(Some(paint)) => commands.push(Command::Fill {
                 path: path.clone(),
@@ -155,6 +166,9 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
             }
         }
 
+        if mask_svg.is_some() {
+            commands.push(Command::PopMask);
+        }
         if clip_id.is_some() {
             commands.push(Command::PopClip);
         }
@@ -216,6 +230,48 @@ fn path_for(kind: &str, geometry: &Geometry, props: &BTreeMap<String, String>) -
         }
         _ => None,
     }
+}
+
+fn svg_mask_svg(
+    props: &BTreeMap<String, String>,
+    defs_xml: &str,
+    geometry: &Geometry,
+    viewport_width: u16,
+    viewport_height: u16,
+) -> Result<Option<String>, String> {
+    if props
+        .get("svg-mask-mode")
+        .map(|value| unquote(value))
+        .as_deref()
+        == Some("binary-opaque-clip")
+    {
+        return Ok(None);
+    }
+
+    let raw = props
+        .get("svg-mask-ref")
+        .map(|value| unquote(value))
+        .or_else(|| props.get("svg-attr-mask").map(|value| unquote(value)));
+    let Some(raw) = raw else { return Ok(None); };
+    let mask_ref = if let Some(value) = raw.strip_prefix("url(#").and_then(|value| value.strip_suffix(')')) {
+        value.to_string()
+    } else if !raw.contains('(') && !raw.trim().is_empty() {
+        raw.clone()
+    } else {
+        return Ok(None);
+    };
+    if defs_xml.trim().is_empty() {
+        return Err(format!("SVG mask `{mask_ref}` has no preserved <defs> XML"));
+    }
+
+    let x = geometry.x.unwrap_or(0.0);
+    let y = geometry.y.unwrap_or(0.0);
+    let width = geometry.width.unwrap_or(f64::from(viewport_width));
+    let height = geometry.height.unwrap_or(f64::from(viewport_height));
+    let escaped_ref = xml_escape_attr(&mask_ref);
+    Ok(Some(format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"{viewport_width}\" height=\"{viewport_height}\" viewBox=\"0 0 {viewport_width} {viewport_height}\">{defs_xml}<rect x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\" fill=\"white\" mask=\"url(#{escaped_ref})\"/></svg>"
+    )))
 }
 
 fn svg_pattern_paint(
