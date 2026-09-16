@@ -2,7 +2,7 @@
 name = "srng-renderer"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.90"
 description = "Reference renderer for SRNG-SCENE"
 license = "Apache-2.0"
 
