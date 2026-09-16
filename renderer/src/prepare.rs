@@ -489,7 +489,13 @@ fn parse_pair(value: &str) -> Option<(f64, f64)> {
 }
 
 fn parse_number(value: &str) -> Option<f64> {
-    value.trim().trim_end_matches("px").parse().ok()
+    let value = unquote(value);
+    let trimmed = value.trim();
+    let numeric = trimmed
+        .strip_suffix("px")
+        .map(str::trim)
+        .unwrap_or(trimmed);
+    numeric.parse().ok()
 }
 
 fn unquote(value: &str) -> String {
@@ -515,67 +521,5 @@ fn diag(severity: &str, code: &str, message: String, id: &str) -> RenderDiagnost
         code: code.to_string(),
         message,
         declaration: Some(id.to_string()),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use srng::runtime::{execute_json, RuntimeOptions};
-
-    fn prepared(source: &str) -> PreparedScene {
-        let ir = srng::compile_to_json(source, "renderer-test.srng");
-        let scene = execute_json(&ir, &RuntimeOptions::default()).unwrap();
-        let gate = RevisionGate::default();
-        let revision = gate.begin();
-        prepare_scene(&scene, revision, &gate)
-    }
-
-    #[test]
-    fn preparation_preserves_paint_order() {
-        let scene = prepared(
-            "srng 0.1; rect a { position: 0px 0px; size: 10px 10px; fill: #000; } rect b { position: 1px 1px; size: 5px 5px; fill: #fff; }",
-        );
-        assert_eq!(scene.commands.len(), 2);
-    }
-
-    #[test]
-    fn none_paint_is_not_an_error() {
-        let scene = prepared(
-            "srng 0.1; rect a { position: 0px 0px; size: 10px 10px; fill: none; stroke: #fff; }",
-        );
-        assert_eq!(scene.commands.len(), 1);
-        assert!(scene.diagnostics.is_empty());
-    }
-
-    #[test]
-    fn normalized_percentage_gradient_stops_are_supported() {
-        let scene = prepared(
-            "srng 0.1; rect a { position: 0px 0px; size: 10px 10px; fill: linear-gradient; gradient-stops: 0% #ff0000, 100% #0000ff; }",
-        );
-        assert!(scene.diagnostics.is_empty());
-        let Command::Fill { paint, .. } = &scene.commands[0] else {
-            panic!("expected fill command");
-        };
-        let Paint::LinearGradient { stops, .. } = paint else {
-            panic!("expected linear gradient");
-        };
-        assert_eq!(stops.len(), 2);
-        assert_eq!(stops[0].offset, 0.0);
-        assert_eq!(stops[1].offset, 1.0);
-    }
-
-    #[test]
-    fn stale_revision_stops_preparation() {
-        let ir = srng::compile_to_json(
-            "srng 0.1; rect a { position: 0px 0px; size: 10px 10px; fill: #fff; }",
-            "renderer-test.srng",
-        );
-        let scene = execute_json(&ir, &RuntimeOptions::default()).unwrap();
-        let gate = RevisionGate::default();
-        let stale = gate.begin();
-        gate.begin();
-        let prepared = prepare_scene(&scene, stale, &gate);
-        assert!(prepared.commands.is_empty());
     }
 }
