@@ -6,6 +6,9 @@ rust-version = "1.90"
 description = "Reference renderer for SRNG-SCENE"
 license = "Apache-2.0"
 
+[lib]
+path = "src/lib2.rs"
+
 [features]
 default = ["cpu"]
 cpu = ["dep:vello_cpu"]
