@@ -4,7 +4,7 @@ use vello_cpu::{
     color::{AlphaColor, Srgb},
     kurbo::{Affine, BezPath, Cap, Join, Stroke as KurboStroke},
     peniko::{ColorStop, ColorStops, Extend, Fill, Gradient, ImageSampler},
-    Image, ImageSource, Pixmap, RenderContext, Resources,
+    Image, ImageSource, Mask, Pixmap, RenderContext, Resources,
 };
 
 #[derive(Debug)]
@@ -47,6 +47,11 @@ fn apply(context: &mut RenderContext, command: &Command) -> Result<(), String> {
             context.push_clip_path(&parse_path(&path.svg)?);
         }
         Command::PopClip => context.pop_clip_path(),
+        Command::PushMaskSvg { svg } => {
+            let pixmap = rasterize_svg_exact(svg, context.width(), context.height())?;
+            context.push_mask_layer(Mask::new_alpha(&pixmap));
+        }
+        Command::PopMask => context.pop_layer(),
         Command::Fill { path, paint, rule } => {
             context.set_fill_rule(to_fill(*rule));
             set_paint(context, paint)?;
@@ -177,6 +182,33 @@ fn rasterize_pattern(svg: &str, tile_width: f64, tile_height: f64) -> Result<(Pi
     Ok((pixmap, raster_width, raster_height))
 }
 
+fn rasterize_svg_exact(svg: &str, width: u16, height: u16) -> Result<Pixmap, String> {
+    use resvg::{tiny_skia, usvg};
+
+    let options = usvg::Options::default();
+    let tree = usvg::Tree::from_str(svg, &options)
+        .map_err(|error| format!("could not parse preserved SVG mask: {error}"))?;
+    let size = tree.size();
+    if size.width() <= 0.0 || size.height() <= 0.0 {
+        return Err("SVG mask has an empty viewport".to_string());
+    }
+
+    let mut source = tiny_skia::Pixmap::new(u32::from(width), u32::from(height))
+        .ok_or_else(|| "could not allocate SVG mask pixmap".to_string())?;
+    let sx = f32::from(width) / size.width();
+    let sy = f32::from(height) / size.height();
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(sx, sy),
+        &mut source.as_mut(),
+    );
+
+    let mut pixmap = Pixmap::new(width, height);
+    pixmap.data_as_u8_slice_mut().copy_from_slice(source.data());
+    pixmap.recompute_may_have_transparency();
+    Ok(pixmap)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,5 +259,31 @@ mod tests {
         assert!(pixel(0)[0] > pixel(0)[2]);
         assert!(pixel(2)[2] > pixel(2)[0]);
         assert!(pixel(4)[0] > pixel(4)[2]);
+    }
+
+    #[test]
+    fn applies_svg_alpha_mask_layer() {
+        let mask_svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="4" height="8" fill="white"/></svg>"##;
+        let scene = PreparedScene {
+            width: 8,
+            height: 8,
+            revision: 1,
+            diagnostics: vec![],
+            commands: vec![
+                Command::PushMaskSvg { svg: mask_svg.to_string() },
+                Command::Fill {
+                    path: crate::PathData { svg: "M 0 0 H 8 V 8 H 0 Z".to_string() },
+                    paint: Paint::Solid(Rgba { r: 255, g: 0, b: 0, a: 255 }),
+                    rule: FillRule::NonZero,
+                },
+                Command::PopMask,
+            ],
+        };
+        let output = render(&scene);
+        assert!(!output.diagnostics.iter().any(|d| d.severity == "error"), "{:?}", output.diagnostics);
+        let left = &output.pixels[(2 * 4)..(2 * 4 + 4)];
+        let right = &output.pixels[(6 * 4)..(6 * 4 + 4)];
+        assert!(left[3] > 200);
+        assert!(right[3] < 10);
     }
 }
