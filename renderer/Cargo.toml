@@ -1,0 +1,17 @@
+[package]
+name = "srng-renderer"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "Reference renderer for SRNG-SCENE"
+license = "Apache-2.0"
+
+[features]
+default = ["cpu"]
+cpu = ["dep:vello_cpu"]
+gpu = ["dep:vello_hybrid"]
+
+[dependencies]
+srng = { path = ".." }
+vello_cpu = { version = "0.2.0", optional = true }
+vello_hybrid = { version = "0.2.0", optional = true }
