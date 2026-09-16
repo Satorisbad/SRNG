@@ -13,6 +13,8 @@ pub struct PreparedScene {
 pub enum Command {
     PushClip { path: PathData, rule: FillRule },
     PopClip,
+    PushMaskSvg { svg: String },
+    PopMask,
     Fill { path: PathData, paint: Paint, rule: FillRule },
     Stroke { path: PathData, paint: Paint, style: StrokeStyle },
 }
