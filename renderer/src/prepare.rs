@@ -16,6 +16,21 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
         .map(|node| (node.id.as_str(), node))
         .collect::<HashMap<_, _>>();
 
+    let defs_xml = scene
+        .nodes
+        .iter()
+        .filter(|node| node.active)
+        .filter_map(|node| {
+            let tag = node.properties.get("svg-source-tag").map(|value| unquote(value));
+            if tag.as_deref() == Some("defs") {
+                node.properties.get("svg-source-xml").map(|value| unquote(value))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
     let mut ordered = Vec::new();
     for node in &scene.nodes {
         if node.active {
@@ -104,17 +119,27 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
             }
         }
 
-        if let Some(fill) = props.get("fill") {
-            if !is_none_paint(fill) {
-                match parse_paint(fill, &props, &geometry) {
-                    Ok(paint) => commands.push(Command::Fill {
-                        path: path.clone(),
-                        paint,
-                        rule: fill_rule(&props),
-                    }),
-                    Err(message) => diagnostics.push(diag("error", "G220", message, id)),
+        match svg_pattern_paint(&props, &defs_xml) {
+            Ok(Some(paint)) => commands.push(Command::Fill {
+                path: path.clone(),
+                paint,
+                rule: fill_rule(&props),
+            }),
+            Ok(None) => {
+                if let Some(fill) = props.get("fill") {
+                    if !is_none_paint(fill) {
+                        match parse_paint(fill, &props, &geometry) {
+                            Ok(paint) => commands.push(Command::Fill {
+                                path: path.clone(),
+                                paint,
+                                rule: fill_rule(&props),
+                            }),
+                            Err(message) => diagnostics.push(diag("error", "G220", message, id)),
+                        }
+                    }
                 }
             }
+            Err(message) => diagnostics.push(diag("error", "G222", message, id)),
         }
 
         if let Some(stroke) = props.get("stroke") {
@@ -191,6 +216,58 @@ fn path_for(kind: &str, geometry: &Geometry, props: &BTreeMap<String, String>) -
         }
         _ => None,
     }
+}
+
+fn svg_pattern_paint(
+    props: &BTreeMap<String, String>,
+    defs_xml: &str,
+) -> Result<Option<Paint>, String> {
+    let Some(pattern_ref) = props.get("svg-pattern-ref").map(|value| unquote(value)) else {
+        return Ok(None);
+    };
+    let tile_width = props
+        .get("svg-pattern-width")
+        .and_then(|value| parse_number(value))
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .ok_or_else(|| format!("SVG pattern `{pattern_ref}` has no positive tile width"))?;
+    let tile_height = props
+        .get("svg-pattern-height")
+        .and_then(|value| parse_number(value))
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .ok_or_else(|| format!("SVG pattern `{pattern_ref}` has no positive tile height"))?;
+
+    let fallback_pattern = props
+        .get("svg-pattern-source-xml")
+        .map(|value| unquote(value))
+        .unwrap_or_default();
+    let definitions = if defs_xml.trim().is_empty() {
+        if fallback_pattern.trim().is_empty() {
+            return Err(format!("SVG pattern `{pattern_ref}` has no preserved definition XML"));
+        }
+        format!("<defs>{fallback_pattern}</defs>")
+    } else {
+        defs_xml.to_string()
+    };
+
+    let escaped_ref = xml_escape_attr(&pattern_ref);
+    let svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"{tile_width}\" height=\"{tile_height}\" viewBox=\"0 0 {tile_width} {tile_height}\">{definitions}<rect x=\"0\" y=\"0\" width=\"{tile_width}\" height=\"{tile_height}\" fill=\"url(#{escaped_ref})\"/></svg>"
+    );
+
+    Ok(Some(Paint::SvgPattern {
+        svg,
+        tile_width,
+        tile_height,
+    }))
+}
+
+fn xml_escape_attr(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 fn parse_paint(
