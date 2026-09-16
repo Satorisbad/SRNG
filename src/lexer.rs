@@ -87,11 +87,28 @@ pub fn lex(source: &str) -> LexResult {
                 if value.len() == 1 { diagnostics.push(Diagnostic::error("E002", "expected hexadecimal color", line, start_col)); }
                 tokens.push(Token { kind: TokenKind::Color(value), line, column: start_col });
             }
-            ch if ch.is_ascii_digit() || (ch == '.' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit()) || (ch == '-' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit()) => {
+            ch if ch.is_ascii_digit() || (ch == '.' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit()) || (ch == '-' && i + 1 < chars.len() && (chars[i + 1].is_ascii_digit() || chars[i + 1] == '.')) => {
                 let start_col = column;
                 let mut value = String::new();
                 if chars[i] == '-' { value.push('-'); i += 1; column += 1; }
-                while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') { value.push(chars[i]); i += 1; column += 1; }
+                while i < chars.len() && chars[i].is_ascii_digit() { value.push(chars[i]); i += 1; column += 1; }
+                if i < chars.len() && chars[i] == '.' {
+                    value.push('.'); i += 1; column += 1;
+                    while i < chars.len() && chars[i].is_ascii_digit() { value.push(chars[i]); i += 1; column += 1; }
+                }
+                if i < chars.len() && matches!(chars[i], 'e' | 'E') {
+                    let exponent_start = i;
+                    let column_start = column;
+                    value.push(chars[i]); i += 1; column += 1;
+                    if i < chars.len() && matches!(chars[i], '+' | '-') { value.push(chars[i]); i += 1; column += 1; }
+                    let digits_start = i;
+                    while i < chars.len() && chars[i].is_ascii_digit() { value.push(chars[i]); i += 1; column += 1; }
+                    if i == digits_start {
+                        i = exponent_start;
+                        column = column_start;
+                        value.truncate(value.find(['e', 'E']).unwrap_or(value.len()));
+                    }
+                }
                 tokens.push(Token { kind: TokenKind::Number(value), line, column: start_col });
             }
             ch if is_ident_start(ch) => {
