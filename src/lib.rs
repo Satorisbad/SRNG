@@ -3,6 +3,7 @@ pub mod diagnostic;
 pub mod ir;
 pub mod lexer;
 pub mod parser;
+#[path = "runtime_v2.rs"]
 pub mod runtime;
 
 use ast::Document;
