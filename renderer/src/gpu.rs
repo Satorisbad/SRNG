@@ -133,6 +133,9 @@ fn apply(context: &mut HybridScene, command: &Command) -> Result<(), String> {
             context.push_clip_path(&parse_path(&path.svg)?);
         }
         Command::PopClip => context.pop_clip_path(),
+        Command::PushMaskSvg { .. } | Command::PopMask => {
+            return Err("SVG rasterized mask layers are currently implemented by the CPU renderer; GPU mask texture support is still pending".to_string());
+        }
         Command::Fill { path, paint, rule } => {
             context.set_fill_rule(to_fill(*rule));
             set_paint(context, paint)?;
