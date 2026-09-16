@@ -1,0 +1,15 @@
+[package]
+name = "srng-studio"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+description = "Native visual SVG to SRNG conversion and validation studio"
+license = "Apache-2.0"
+
+[dependencies]
+srng = { path = ".." }
+srng-renderer = { path = "../renderer" }
+eframe = { version = "0.32.3", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+rfd = { version = "0.15.4", default-features = false, features = ["xdg-portal", "async-std"] }
+resvg = "0.45.1"
+png = "0.17.16"
