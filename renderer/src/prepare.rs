@@ -130,7 +130,7 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
             commands.push(Command::PushMaskSvg { svg: svg.clone() });
         }
 
-        match svg_pattern_paint(&props, &defs_xml) {
+        match svg_pattern_paint(&props, &defs_xml, &geometry) {
             Ok(Some(paint)) => commands.push(Command::Fill {
                 path: path.clone(),
                 paint,
@@ -277,16 +277,18 @@ fn svg_mask_svg(
 fn svg_pattern_paint(
     props: &BTreeMap<String, String>,
     defs_xml: &str,
+    geometry: &Geometry,
 ) -> Result<Option<Paint>, String> {
     let Some(pattern_ref) = props.get("svg-pattern-ref").map(|value| unquote(value)) else {
         return Ok(None);
     };
-    let tile_width = props
+
+    let stored_width = props
         .get("svg-pattern-width")
         .and_then(|value| parse_number(value))
         .filter(|value| value.is_finite() && *value > 0.0)
         .ok_or_else(|| format!("SVG pattern `{pattern_ref}` has no positive tile width"))?;
-    let tile_height = props
+    let stored_height = props
         .get("svg-pattern-height")
         .and_then(|value| parse_number(value))
         .filter(|value| value.is_finite() && *value > 0.0)
@@ -296,6 +298,18 @@ fn svg_pattern_paint(
         .get("svg-pattern-source-xml")
         .map(|value| unquote(value))
         .unwrap_or_default();
+    let metrics = parse_pattern_metrics(&fallback_pattern, stored_width, stored_height)?;
+    let (tile_width, tile_height) = if metrics.user_space_on_use {
+        (metrics.width, metrics.height)
+    } else {
+        let target_width = geometry.width.unwrap_or(1.0).abs();
+        let target_height = geometry.height.unwrap_or(1.0).abs();
+        (metrics.width * target_width, metrics.height * target_height)
+    };
+    if !tile_width.is_finite() || !tile_height.is_finite() || tile_width <= 0.0 || tile_height <= 0.0 {
+        return Err(format!("SVG pattern `{pattern_ref}` resolves to an empty tile"));
+    }
+
     let definitions = if defs_xml.trim().is_empty() {
         if fallback_pattern.trim().is_empty() {
             return Err(format!("SVG pattern `{pattern_ref}` has no preserved definition XML"));
@@ -315,6 +329,67 @@ fn svg_pattern_paint(
         tile_width,
         tile_height,
     }))
+}
+
+struct PatternMetrics {
+    user_space_on_use: bool,
+    width: f64,
+    height: f64,
+}
+
+fn parse_pattern_metrics(
+    pattern_xml: &str,
+    fallback_width: f64,
+    fallback_height: f64,
+) -> Result<PatternMetrics, String> {
+    if pattern_xml.trim().is_empty() {
+        return Ok(PatternMetrics {
+            user_space_on_use: true,
+            width: fallback_width,
+            height: fallback_height,
+        });
+    }
+
+    let wrapped = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\"><defs>{pattern_xml}</defs></svg>"
+    );
+    let document = roxmltree::Document::parse(&wrapped)
+        .map_err(|error| format!("could not inspect SVG pattern units: {error}"))?;
+    let pattern = document
+        .descendants()
+        .find(|node| node.is_element() && node.tag_name().name() == "pattern")
+        .ok_or_else(|| "preserved SVG pattern XML has no <pattern> element".to_string())?;
+    let user_space_on_use = pattern.attribute("patternUnits") == Some("userSpaceOnUse");
+
+    let width = pattern
+        .attribute("width")
+        .and_then(|value| parse_pattern_dimension(value, user_space_on_use))
+        .unwrap_or(fallback_width);
+    let height = pattern
+        .attribute("height")
+        .and_then(|value| parse_pattern_dimension(value, user_space_on_use))
+        .unwrap_or(fallback_height);
+
+    Ok(PatternMetrics {
+        user_space_on_use,
+        width,
+        height,
+    })
+}
+
+fn parse_pattern_dimension(value: &str, user_space_on_use: bool) -> Option<f64> {
+    let trimmed = value.trim();
+    if let Some(percent) = trimmed.strip_suffix('%') {
+        let fraction = percent.trim().parse::<f64>().ok()? / 100.0;
+        return if user_space_on_use { None } else { Some(fraction) };
+    }
+    let numeric = trimmed
+        .strip_suffix("px")
+        .map(str::trim)
+        .unwrap_or(trimmed)
+        .parse::<f64>()
+        .ok()?;
+    Some(numeric)
 }
 
 fn xml_escape_attr(value: &str) -> String {
