@@ -214,6 +214,15 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    fn alpha_at(image: &RgbaImage, x: usize, y: usize) -> u8 {
+        image.pixels[(y * image.width + x) * 4 + 3]
+    }
+
+    fn rgba_at(image: &RgbaImage, x: usize, y: usize) -> &[u8] {
+        let offset = (y * image.width + x) * 4;
+        &image.pixels[offset..offset + 4]
+    }
+
     #[test]
     fn svg_runs_through_importer_and_renderer() {
         let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="48"><rect id="box" x="4" y="5" width="40" height="30" fill="#ff0000"/></svg>"##;
@@ -224,6 +233,89 @@ mod tests {
         assert!(outcome.rendered.as_ref().is_some_and(|image| {
             image.width == 64 && image.height == 48 && image.pixels.iter().any(|b| *b != 0)
         }));
+    }
+
+    #[test]
+    fn rounded_rect_changes_corner_coverage() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect x="4" y="4" width="32" height="32" rx="10" fill="#ff0000"/></svg>"##;
+        let outcome = convert_svg(svg, "rounded.svg");
+        assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+        let image = outcome.rendered.unwrap();
+        assert_eq!(alpha_at(&image, 4, 4), 0);
+        assert!(alpha_at(&image, 20, 20) > 0);
+        assert!(!outcome.diagnostics.iter().any(|d| d.code == "S210"));
+    }
+
+    #[test]
+    fn clip_path_limits_rendered_pixels() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><defs><clipPath id="cut"><rect x="10" y="10" width="20" height="20"/></clipPath></defs><rect width="40" height="40" fill="#ff0000" clip-path="url(#cut)"/></svg>"##;
+        let outcome = convert_svg(svg, "clip.svg");
+        assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+        let image = outcome.rendered.unwrap();
+        assert_eq!(alpha_at(&image, 5, 5), 0);
+        assert!(alpha_at(&image, 20, 20) > 0);
+        assert_eq!(alpha_at(&image, 35, 35), 0);
+    }
+
+    #[test]
+    fn simple_white_mask_behaves_as_binary_clip() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><defs><mask id="m"><circle cx="20" cy="20" r="10" fill="white"/></mask></defs><rect width="40" height="40" fill="#00ff00" mask="url(#m)"/></svg>"##;
+        let outcome = convert_svg(svg, "mask.svg");
+        assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+        let image = outcome.rendered.unwrap();
+        assert_eq!(alpha_at(&image, 2, 2), 0);
+        assert!(alpha_at(&image, 20, 20) > 0);
+        assert!(!outcome.diagnostics.iter().any(|d| d.code == "S242"));
+    }
+
+    #[test]
+    fn svg_pattern_fill_repeats_through_full_pipeline() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="12" height="4"><defs><pattern id="p" patternUnits="userSpaceOnUse" width="4" height="4"><rect width="2" height="4" fill="#ff0000"/><rect x="2" width="2" height="4" fill="#0000ff"/></pattern></defs><rect id="box" width="12" height="4" fill="url(#p)"/></svg>"##;
+        let outcome = convert_svg(svg, "pattern.svg");
+        assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+        assert!(!outcome.diagnostics.iter().any(|d| d.code == "S232" && d.severity == "warning"));
+        let image = outcome.rendered.expect("pattern should render");
+        let a = rgba_at(&image, 0, 1);
+        let b = rgba_at(&image, 2, 1);
+        let c = rgba_at(&image, 4, 1);
+        assert!(a[0] > a[2], "first half of tile should be red: {a:?}");
+        assert!(b[2] > b[0], "second half of tile should be blue: {b:?}");
+        assert!(c[0] > c[2], "pattern should repeat: {c:?}");
+    }
+
+    #[test]
+    fn object_bounding_box_pattern_scales_to_target_bounds() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="12" height="4"><defs><pattern id="p" patternContentUnits="objectBoundingBox" width="1" height="1"><rect width="0.5" height="1" fill="#ff0000"/><rect x="0.5" width="0.5" height="1" fill="#0000ff"/></pattern></defs><rect id="box" width="12" height="4" fill="url(#p)"/></svg>"##;
+        let outcome = convert_svg(svg, "bbox-pattern.svg");
+        assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+        let image = outcome.rendered.expect("objectBoundingBox pattern should render");
+        let left = rgba_at(&image, 2, 1);
+        let right = rgba_at(&image, 9, 1);
+        assert!(left[0] > left[2], "left half should be red: {left:?}");
+        assert!(right[2] > right[0], "right half should be blue: {right:?}");
+    }
+
+    #[test]
+    fn figma_style_embedded_image_pattern_survives_defs_resolution() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="8" height="4"><defs><pattern id="p" patternContentUnits="objectBoundingBox" width="1" height="1"><use xlink:href="#img" transform="scale(0.5 1)"/></pattern><image id="img" width="2" height="1" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAADklEQVR4nGP4z8AAQv8BD/kD/YURmXYAAAAASUVORK5CYII="/></defs><rect id="box" width="8" height="4" fill="url(#p)"/></svg>"##;
+        let outcome = convert_svg(svg, "embedded-pattern.svg");
+        assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+        assert!(!outcome.diagnostics.iter().any(|d| d.code == "S232" && d.severity == "warning"));
+        let image = outcome.rendered.expect("embedded image pattern should render");
+        assert!(image.pixels.iter().any(|b| *b != 0));
+    }
+
+    #[test]
+    fn complex_svg_mask_is_applied_by_cpu_renderer() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><defs><mask id="m"><rect width="4" height="8" fill="#808080"/></mask></defs><rect id="box" width="8" height="8" fill="#ff0000" mask="url(#m)"/></svg>"##;
+        let outcome = convert_svg(svg, "mask-complex.svg");
+        assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+        assert!(!outcome.diagnostics.iter().any(|d| d.code == "S242" && d.severity == "warning"));
+        let image = outcome.rendered.expect("complex mask should render");
+        let inside = rgba_at(&image, 2, 2);
+        let outside = rgba_at(&image, 6, 2);
+        assert!(inside[3] > 20, "masked area should retain alpha: {inside:?}");
+        assert!(outside[3] < inside[3], "outside mask should be more transparent: {outside:?}");
     }
 
     #[test]

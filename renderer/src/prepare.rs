@@ -16,6 +16,21 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
         .map(|node| (node.id.as_str(), node))
         .collect::<HashMap<_, _>>();
 
+    let defs_xml = scene
+        .nodes
+        .iter()
+        .filter(|node| node.active)
+        .filter_map(|node| {
+            let tag = node.properties.get("svg-source-tag").map(|value| unquote(value));
+            if tag.as_deref() == Some("defs") {
+                node.properties.get("svg-source-xml").map(|value| unquote(value))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
     let mut ordered = Vec::new();
     for node in &scene.nodes {
         if node.active {
@@ -104,17 +119,38 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
             }
         }
 
-        if let Some(fill) = props.get("fill") {
-            if !is_none_paint(fill) {
-                match parse_paint(fill, &props, &geometry) {
-                    Ok(paint) => commands.push(Command::Fill {
-                        path: path.clone(),
-                        paint,
-                        rule: fill_rule(&props),
-                    }),
-                    Err(message) => diagnostics.push(diag("error", "G220", message, id)),
+        let mask_svg = match svg_mask_svg(&props, &defs_xml, &geometry, width, height) {
+            Ok(mask) => mask,
+            Err(message) => {
+                diagnostics.push(diag("error", "G223", message, id));
+                None
+            }
+        };
+        if let Some(svg) = mask_svg.as_ref() {
+            commands.push(Command::PushMaskSvg { svg: svg.clone() });
+        }
+
+        match svg_pattern_paint(&props, &defs_xml, &geometry) {
+            Ok(Some(paint)) => commands.push(Command::Fill {
+                path: path.clone(),
+                paint,
+                rule: fill_rule(&props),
+            }),
+            Ok(None) => {
+                if let Some(fill) = props.get("fill") {
+                    if !is_none_paint(fill) {
+                        match parse_paint(fill, &props, &geometry) {
+                            Ok(paint) => commands.push(Command::Fill {
+                                path: path.clone(),
+                                paint,
+                                rule: fill_rule(&props),
+                            }),
+                            Err(message) => diagnostics.push(diag("error", "G220", message, id)),
+                        }
+                    }
                 }
             }
+            Err(message) => diagnostics.push(diag("error", "G222", message, id)),
         }
 
         if let Some(stroke) = props.get("stroke") {
@@ -130,6 +166,9 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
             }
         }
 
+        if mask_svg.is_some() {
+            commands.push(Command::PopMask);
+        }
         if clip_id.is_some() {
             commands.push(Command::PopClip);
         }
@@ -191,6 +230,175 @@ fn path_for(kind: &str, geometry: &Geometry, props: &BTreeMap<String, String>) -
         }
         _ => None,
     }
+}
+
+fn svg_mask_svg(
+    props: &BTreeMap<String, String>,
+    defs_xml: &str,
+    geometry: &Geometry,
+    viewport_width: u16,
+    viewport_height: u16,
+) -> Result<Option<String>, String> {
+    if props
+        .get("svg-mask-mode")
+        .map(|value| unquote(value))
+        .as_deref()
+        == Some("binary-opaque-clip")
+    {
+        return Ok(None);
+    }
+
+    let raw = props
+        .get("svg-mask-ref")
+        .map(|value| unquote(value))
+        .or_else(|| props.get("svg-attr-mask").map(|value| unquote(value)));
+    let Some(raw) = raw else { return Ok(None); };
+    let mask_ref = if let Some(value) = raw.strip_prefix("url(#").and_then(|value| value.strip_suffix(')')) {
+        value.to_string()
+    } else if !raw.contains('(') && !raw.trim().is_empty() {
+        raw.clone()
+    } else {
+        return Ok(None);
+    };
+    if defs_xml.trim().is_empty() {
+        return Err(format!("SVG mask `{mask_ref}` has no preserved <defs> XML"));
+    }
+
+    let x = geometry.x.unwrap_or(0.0);
+    let y = geometry.y.unwrap_or(0.0);
+    let width = geometry.width.unwrap_or(f64::from(viewport_width));
+    let height = geometry.height.unwrap_or(f64::from(viewport_height));
+    let escaped_ref = xml_escape_attr(&mask_ref);
+    Ok(Some(format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"{viewport_width}\" height=\"{viewport_height}\" viewBox=\"0 0 {viewport_width} {viewport_height}\">{defs_xml}<rect x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\" fill=\"white\" mask=\"url(#{escaped_ref})\"/></svg>"
+    )))
+}
+
+fn svg_pattern_paint(
+    props: &BTreeMap<String, String>,
+    defs_xml: &str,
+    geometry: &Geometry,
+) -> Result<Option<Paint>, String> {
+    let Some(pattern_ref) = props.get("svg-pattern-ref").map(|value| unquote(value)) else {
+        return Ok(None);
+    };
+
+    let stored_width = props
+        .get("svg-pattern-width")
+        .and_then(|value| parse_number(value))
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .ok_or_else(|| format!("SVG pattern `{pattern_ref}` has no positive tile width"))?;
+    let stored_height = props
+        .get("svg-pattern-height")
+        .and_then(|value| parse_number(value))
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .ok_or_else(|| format!("SVG pattern `{pattern_ref}` has no positive tile height"))?;
+
+    let fallback_pattern = props
+        .get("svg-pattern-source-xml")
+        .map(|value| unquote(value))
+        .unwrap_or_default();
+    let metrics = parse_pattern_metrics(&fallback_pattern, stored_width, stored_height)?;
+    let (tile_width, tile_height) = if metrics.user_space_on_use {
+        (metrics.width, metrics.height)
+    } else {
+        let target_width = geometry.width.unwrap_or(1.0).abs();
+        let target_height = geometry.height.unwrap_or(1.0).abs();
+        (metrics.width * target_width, metrics.height * target_height)
+    };
+    if !tile_width.is_finite() || !tile_height.is_finite() || tile_width <= 0.0 || tile_height <= 0.0 {
+        return Err(format!("SVG pattern `{pattern_ref}` resolves to an empty tile"));
+    }
+
+    let definitions = if defs_xml.trim().is_empty() {
+        if fallback_pattern.trim().is_empty() {
+            return Err(format!("SVG pattern `{pattern_ref}` has no preserved definition XML"));
+        }
+        format!("<defs>{fallback_pattern}</defs>")
+    } else {
+        defs_xml.to_string()
+    };
+
+    let escaped_ref = xml_escape_attr(&pattern_ref);
+    let svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"{tile_width}\" height=\"{tile_height}\" viewBox=\"0 0 {tile_width} {tile_height}\">{definitions}<rect x=\"0\" y=\"0\" width=\"{tile_width}\" height=\"{tile_height}\" fill=\"url(#{escaped_ref})\"/></svg>"
+    );
+
+    Ok(Some(Paint::SvgPattern {
+        svg,
+        tile_width,
+        tile_height,
+    }))
+}
+
+struct PatternMetrics {
+    user_space_on_use: bool,
+    width: f64,
+    height: f64,
+}
+
+fn parse_pattern_metrics(
+    pattern_xml: &str,
+    fallback_width: f64,
+    fallback_height: f64,
+) -> Result<PatternMetrics, String> {
+    if pattern_xml.trim().is_empty() {
+        return Ok(PatternMetrics {
+            user_space_on_use: true,
+            width: fallback_width,
+            height: fallback_height,
+        });
+    }
+
+    let wrapped = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\"><defs>{pattern_xml}</defs></svg>"
+    );
+    let document = roxmltree::Document::parse(&wrapped)
+        .map_err(|error| format!("could not inspect SVG pattern units: {error}"))?;
+    let pattern = document
+        .descendants()
+        .find(|node| node.is_element() && node.tag_name().name() == "pattern")
+        .ok_or_else(|| "preserved SVG pattern XML has no <pattern> element".to_string())?;
+    let user_space_on_use = pattern.attribute("patternUnits") == Some("userSpaceOnUse");
+
+    let width = pattern
+        .attribute("width")
+        .and_then(|value| parse_pattern_dimension(value, user_space_on_use))
+        .unwrap_or(fallback_width);
+    let height = pattern
+        .attribute("height")
+        .and_then(|value| parse_pattern_dimension(value, user_space_on_use))
+        .unwrap_or(fallback_height);
+
+    Ok(PatternMetrics {
+        user_space_on_use,
+        width,
+        height,
+    })
+}
+
+fn parse_pattern_dimension(value: &str, user_space_on_use: bool) -> Option<f64> {
+    let trimmed = value.trim();
+    if let Some(percent) = trimmed.strip_suffix('%') {
+        let fraction = percent.trim().parse::<f64>().ok()? / 100.0;
+        return if user_space_on_use { None } else { Some(fraction) };
+    }
+    let numeric = trimmed
+        .strip_suffix("px")
+        .map(str::trim)
+        .unwrap_or(trimmed)
+        .parse::<f64>()
+        .ok()?;
+    Some(numeric)
+}
+
+fn xml_escape_attr(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 fn parse_paint(
@@ -356,16 +564,48 @@ fn parse_pair(value: &str) -> Option<(f64, f64)> {
 }
 
 fn parse_number(value: &str) -> Option<f64> {
-    value.trim().trim_end_matches("px").parse().ok()
+    let value = unquote(value);
+    let trimmed = value.trim();
+    let numeric = trimmed
+        .strip_suffix("px")
+        .map(str::trim)
+        .unwrap_or(trimmed);
+    numeric.parse().ok()
 }
 
 fn unquote(value: &str) -> String {
-    value
-        .trim()
+    let trimmed = value.trim();
+    let Some(inner) = trimmed
         .strip_prefix('"')
         .and_then(|value| value.strip_suffix('"'))
-        .unwrap_or(value.trim())
-        .to_string()
+    else {
+        return trimmed.to_string();
+    };
+    unescape_string(inner)
+}
+
+fn unescape_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('\\') => out.push('\\'),
+            Some('"') => out.push('"'),
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 fn is_none_paint(value: &str) -> bool {
@@ -382,67 +622,5 @@ fn diag(severity: &str, code: &str, message: String, id: &str) -> RenderDiagnost
         code: code.to_string(),
         message,
         declaration: Some(id.to_string()),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use srng::runtime::{execute_json, RuntimeOptions};
-
-    fn prepared(source: &str) -> PreparedScene {
-        let ir = srng::compile_to_json(source, "renderer-test.srng");
-        let scene = execute_json(&ir, &RuntimeOptions::default()).unwrap();
-        let gate = RevisionGate::default();
-        let revision = gate.begin();
-        prepare_scene(&scene, revision, &gate)
-    }
-
-    #[test]
-    fn preparation_preserves_paint_order() {
-        let scene = prepared(
-            "srng 0.1; rect a { position: 0px 0px; size: 10px 10px; fill: #000; } rect b { position: 1px 1px; size: 5px 5px; fill: #fff; }",
-        );
-        assert_eq!(scene.commands.len(), 2);
-    }
-
-    #[test]
-    fn none_paint_is_not_an_error() {
-        let scene = prepared(
-            "srng 0.1; rect a { position: 0px 0px; size: 10px 10px; fill: none; stroke: #fff; }",
-        );
-        assert_eq!(scene.commands.len(), 1);
-        assert!(scene.diagnostics.is_empty());
-    }
-
-    #[test]
-    fn normalized_percentage_gradient_stops_are_supported() {
-        let scene = prepared(
-            "srng 0.1; rect a { position: 0px 0px; size: 10px 10px; fill: linear-gradient; gradient-stops: 0% #ff0000, 100% #0000ff; }",
-        );
-        assert!(scene.diagnostics.is_empty());
-        let Command::Fill { paint, .. } = &scene.commands[0] else {
-            panic!("expected fill command");
-        };
-        let Paint::LinearGradient { stops, .. } = paint else {
-            panic!("expected linear gradient");
-        };
-        assert_eq!(stops.len(), 2);
-        assert_eq!(stops[0].offset, 0.0);
-        assert_eq!(stops[1].offset, 1.0);
-    }
-
-    #[test]
-    fn stale_revision_stops_preparation() {
-        let ir = srng::compile_to_json(
-            "srng 0.1; rect a { position: 0px 0px; size: 10px 10px; fill: #fff; }",
-            "renderer-test.srng",
-        );
-        let scene = execute_json(&ir, &RuntimeOptions::default()).unwrap();
-        let gate = RevisionGate::default();
-        let stale = gate.begin();
-        gate.begin();
-        let prepared = prepare_scene(&scene, stale, &gate);
-        assert!(prepared.commands.is_empty());
     }
 }

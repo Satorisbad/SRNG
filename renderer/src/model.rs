@@ -13,6 +13,8 @@ pub struct PreparedScene {
 pub enum Command {
     PushClip { path: PathData, rule: FillRule },
     PopClip,
+    PushMaskSvg { svg: String },
+    PopMask,
     Fill { path: PathData, paint: Paint, rule: FillRule },
     Stroke { path: PathData, paint: Paint, style: StrokeStyle },
 }
@@ -29,6 +31,11 @@ pub enum Paint {
         start: (f64, f64),
         end: (f64, f64),
         stops: Vec<GradientStop>,
+    },
+    SvgPattern {
+        svg: String,
+        tile_width: f64,
+        tile_height: f64,
     },
 }
 
