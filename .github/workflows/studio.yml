@@ -1,0 +1,26 @@
+name: Studio
+
+on:
+  push:
+    branches: [svg-studio-v0.1]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  studio:
+    name: Studio / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check native app
+        run: cargo check --manifest-path studio/Cargo.toml
+      - name: Test conversion and render pipeline
+        run: cargo test --manifest-path studio/Cargo.toml
