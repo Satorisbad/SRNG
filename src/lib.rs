@@ -3,6 +3,8 @@ pub mod diagnostic;
 pub mod ir;
 pub mod lexer;
 pub mod parser;
+#[path = "svg_import.rs"]
+mod svg_import_impl;
 pub mod svg;
 #[path = "runtime_v2.rs"]
 pub mod runtime;
