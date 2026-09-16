@@ -499,12 +499,38 @@ fn parse_number(value: &str) -> Option<f64> {
 }
 
 fn unquote(value: &str) -> String {
-    value
-        .trim()
+    let trimmed = value.trim();
+    let Some(inner) = trimmed
         .strip_prefix('"')
         .and_then(|value| value.strip_suffix('"'))
-        .unwrap_or(value.trim())
-        .to_string()
+    else {
+        return trimmed.to_string();
+    };
+    unescape_string(inner)
+}
+
+fn unescape_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('\\') => out.push('\\'),
+            Some('"') => out.push('"'),
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 fn is_none_paint(value: &str) -> bool {
