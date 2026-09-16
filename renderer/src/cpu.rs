@@ -1,9 +1,10 @@
 use crate::{Command, FillRule, LineCap, LineJoin, Paint, PreparedScene, RenderDiagnostic, Rgba};
+use std::sync::Arc;
 use vello_cpu::{
     color::{AlphaColor, Srgb},
-    kurbo::{BezPath, Cap, Join, Stroke as KurboStroke},
-    peniko::{ColorStop, ColorStops, Fill, Gradient},
-    Pixmap, RenderContext, Resources,
+    kurbo::{Affine, BezPath, Cap, Join, Stroke as KurboStroke},
+    peniko::{ColorStop, ColorStops, Extend, Fill, Gradient, ImageSampler},
+    Image, ImageSource, Pixmap, RenderContext, Resources,
 };
 
 #[derive(Debug)]
@@ -48,11 +49,11 @@ fn apply(context: &mut RenderContext, command: &Command) -> Result<(), String> {
         Command::PopClip => context.pop_clip_path(),
         Command::Fill { path, paint, rule } => {
             context.set_fill_rule(to_fill(*rule));
-            set_paint(context, paint);
+            set_paint(context, paint)?;
             context.fill_path(&parse_path(&path.svg)?);
         }
         Command::Stroke { path, paint, style } => {
-            set_paint(context, paint);
+            set_paint(context, paint)?;
             let stroke = KurboStroke::new(style.width)
                 .with_miter_limit(style.miter_limit)
                 .with_caps(cap(style.line_cap))
@@ -96,7 +97,8 @@ fn color(value: Rgba) -> AlphaColor<Srgb> {
     AlphaColor::<Srgb>::from_rgba8(value.r, value.g, value.b, value.a)
 }
 
-fn set_paint(context: &mut RenderContext, paint: &Paint) {
+fn set_paint(context: &mut RenderContext, paint: &Paint) -> Result<(), String> {
+    context.reset_paint_transform();
     match paint {
         Paint::Solid(value) => context.set_paint(color(*value)),
         Paint::LinearGradient { start, end, stops } => {
@@ -111,7 +113,68 @@ fn set_paint(context: &mut RenderContext, paint: &Paint) {
             );
             context.set_paint(Gradient::new_linear(*start, *end).with_stops(stops));
         }
+        Paint::SvgPattern {
+            svg,
+            tile_width,
+            tile_height,
+        } => {
+            let (pixmap, raster_width, raster_height) = rasterize_pattern(svg, *tile_width, *tile_height)?;
+            let image = Image {
+                image: ImageSource::Pixmap(Arc::new(pixmap)),
+                sampler: ImageSampler {
+                    x_extend: Extend::Repeat,
+                    y_extend: Extend::Repeat,
+                    ..Default::default()
+                },
+            };
+            context.set_paint(image);
+            context.set_paint_transform(Affine::scale_non_uniform(
+                *tile_width / f64::from(raster_width),
+                *tile_height / f64::from(raster_height),
+            ));
+        }
     }
+    Ok(())
+}
+
+fn rasterize_pattern(svg: &str, tile_width: f64, tile_height: f64) -> Result<(Pixmap, u16, u16), String> {
+    use resvg::{tiny_skia, usvg};
+
+    if !tile_width.is_finite() || !tile_height.is_finite() || tile_width <= 0.0 || tile_height <= 0.0 {
+        return Err("SVG pattern tile dimensions must be positive finite numbers".to_string());
+    }
+
+    let options = usvg::Options::default();
+    let tree = usvg::Tree::from_str(svg, &options)
+        .map_err(|error| format!("could not parse preserved SVG pattern: {error}"))?;
+    let size = tree.size();
+    if size.width() <= 0.0 || size.height() <= 0.0 {
+        return Err("SVG pattern has an empty tile viewport".to_string());
+    }
+
+    const TARGET_SIDE: f32 = 256.0;
+    const MAX_SIDE: f32 = 512.0;
+    let longest = size.width().max(size.height()).max(0.001);
+    let scale = (TARGET_SIDE / longest).max(1.0);
+    let width = (size.width() * scale).ceil().clamp(1.0, MAX_SIDE) as u32;
+    let height = (size.height() * scale).ceil().clamp(1.0, MAX_SIDE) as u32;
+    let raster_width = u16::try_from(width).map_err(|_| "SVG pattern raster width is too large".to_string())?;
+    let raster_height = u16::try_from(height).map_err(|_| "SVG pattern raster height is too large".to_string())?;
+
+    let mut source = tiny_skia::Pixmap::new(width, height)
+        .ok_or_else(|| "could not allocate SVG pattern tile".to_string())?;
+    let sx = width as f32 / size.width();
+    let sy = height as f32 / size.height();
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(sx, sy),
+        &mut source.as_mut(),
+    );
+
+    let mut pixmap = Pixmap::new(raster_width, raster_height);
+    pixmap.data_as_u8_slice_mut().copy_from_slice(source.data());
+    pixmap.recompute_may_have_transparency();
+    Ok((pixmap, raster_width, raster_height))
 }
 
 #[cfg(test)]
@@ -137,5 +200,32 @@ mod tests {
         assert_eq!(output.pixels.len(), 8 * 8 * 4);
         assert!(output.pixels.iter().any(|byte| *byte != 0));
         assert!(!output.diagnostics.iter().any(|d| d.severity == "error"));
+    }
+
+    #[test]
+    fn renders_repeating_svg_pattern_paint() {
+        let pattern_svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4" viewBox="0 0 4 4"><rect width="2" height="4" fill="#ff0000"/><rect x="2" width="2" height="4" fill="#0000ff"/></svg>"##;
+        let scene = PreparedScene {
+            width: 12,
+            height: 4,
+            revision: 1,
+            diagnostics: vec![],
+            commands: vec![Command::Fill {
+                path: crate::PathData { svg: "M 0 0 H 12 V 4 H 0 Z".to_string() },
+                paint: Paint::SvgPattern {
+                    svg: pattern_svg.to_string(),
+                    tile_width: 4.0,
+                    tile_height: 4.0,
+                },
+                rule: FillRule::NonZero,
+            }],
+        };
+        let output = render(&scene);
+        assert!(!output.diagnostics.iter().any(|d| d.severity == "error"), "{:?}", output.diagnostics);
+        assert_eq!(output.pixels.len(), 12 * 4 * 4);
+        let pixel = |x: usize| &output.pixels[x * 4..x * 4 + 4];
+        assert!(pixel(0)[0] > pixel(0)[2]);
+        assert!(pixel(2)[2] > pixel(2)[0]);
+        assert!(pixel(4)[0] > pixel(4)[2]);
     }
 }
