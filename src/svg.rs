@@ -1,7 +1,4 @@
-#[path = "svg_import.rs"]
-mod importer;
-
-pub use importer::{ImportDiagnostic, ImportOptions, ImportResult};
+pub use crate::svg_import_impl::{ImportDiagnostic, ImportOptions, ImportResult};
 
 /// Import SVG into SRNG while normalizing diagnostics to the capabilities of
 /// the current renderer stack. The lower-level importer still records the
@@ -9,7 +6,7 @@ pub use importer::{ImportDiagnostic, ImportOptions, ImportResult};
 /// reports features that are now rendered as informational mappings rather
 /// than stale unsupported-feature warnings.
 pub fn import_svg(svg: &str, source_name: &str, options: &ImportOptions) -> ImportResult {
-    let mut result = importer::import_svg(svg, source_name, options);
+    let mut result = crate::svg_import_impl::import_svg(svg, source_name, options);
     for diagnostic in &mut result.diagnostics {
         match diagnostic.code.as_str() {
             "S232" => {
