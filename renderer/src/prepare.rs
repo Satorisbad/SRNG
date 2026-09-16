@@ -228,29 +228,32 @@ fn parse_gradient_stops(value: &str) -> Result<Vec<GradientStop>, String> {
     value
         .split(',')
         .map(|part| {
-            let mut fields = part.split_whitespace();
-            let offset = fields
-                .next()
-                .ok_or_else(|| "gradient stop is missing offset".to_string())?;
-            let color = fields
-                .next()
-                .ok_or_else(|| "gradient stop is missing color".to_string())?;
-            let offset = if let Some(value) = offset.strip_suffix('%') {
-                value
-                    .parse::<f32>()
-                    .map_err(|_| "invalid gradient stop offset".to_string())?
-                    / 100.0
+            let fields = part.split_whitespace().collect::<Vec<_>>();
+            if fields.len() < 2 {
+                return Err("gradient stop requires offset and color".to_string());
+            }
+
+            let (offset_text, color_text, percent) = if fields.len() >= 3 && fields[1] == "%" {
+                (fields[0], fields[2], true)
+            } else if let Some(offset) = fields[0].strip_suffix('%') {
+                (offset, fields[1], true)
             } else {
-                offset
-                    .parse::<f32>()
-                    .map_err(|_| "invalid gradient stop offset".to_string())?
+                (fields[0], fields[1], false)
             };
+
+            let mut offset = offset_text
+                .parse::<f32>()
+                .map_err(|_| "invalid gradient stop offset".to_string())?;
+            if percent {
+                offset /= 100.0;
+            }
             if !(0.0..=1.0).contains(&offset) {
                 return Err("gradient stop offset must be in 0..=1".to_string());
             }
+
             Ok(GradientStop {
                 offset,
-                color: parse_color(color)?,
+                color: parse_color(color_text)?,
             })
         })
         .collect()
@@ -410,6 +413,23 @@ mod tests {
         );
         assert_eq!(scene.commands.len(), 1);
         assert!(scene.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn normalized_percentage_gradient_stops_are_supported() {
+        let scene = prepared(
+            "srng 0.1; rect a { position: 0px 0px; size: 10px 10px; fill: linear-gradient; gradient-stops: 0% #ff0000, 100% #0000ff; }",
+        );
+        assert!(scene.diagnostics.is_empty());
+        let Command::Fill { paint, .. } = &scene.commands[0] else {
+            panic!("expected fill command");
+        };
+        let Paint::LinearGradient { stops, .. } = paint else {
+            panic!("expected linear gradient");
+        };
+        assert_eq!(stops.len(), 2);
+        assert_eq!(stops[0].offset, 0.0);
+        assert_eq!(stops[1].offset, 1.0);
     }
 
     #[test]
