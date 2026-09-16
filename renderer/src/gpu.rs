@@ -32,10 +32,6 @@ impl fmt::Display for GpuRenderError {
 
 impl std::error::Error for GpuRenderError {}
 
-/// Persistent Vello Hybrid renderer state for one target format and maximum target size.
-///
-/// The caller owns the wgpu device, queue, command encoder, target texture/view and submission.
-/// `render_to_view` records SRNG rendering commands into the supplied encoder.
 #[derive(Debug)]
 pub struct GpuRenderer {
     renderer: HybridRenderer,
@@ -75,11 +71,6 @@ impl GpuRenderer {
         (self.target_width, self.target_height)
     }
 
-    /// Records rendering commands for `scene` into `encoder` and writes into `view`.
-    ///
-    /// The prepared scene must not exceed the dimensions used to construct this renderer.
-    /// SRNG v0.1 does not currently expose external image textures, so an empty texture-binding
-    /// table is used. The caller submits the encoder through its normal wgpu workflow.
     pub fn render_to_view(
         &mut self,
         scene: &PreparedScene,
@@ -144,11 +135,11 @@ fn apply(context: &mut HybridScene, command: &Command) -> Result<(), String> {
         Command::PopClip => context.pop_clip_path(),
         Command::Fill { path, paint, rule } => {
             context.set_fill_rule(to_fill(*rule));
-            set_paint(context, paint);
+            set_paint(context, paint)?;
             context.fill_path(&parse_path(&path.svg)?);
         }
         Command::Stroke { path, paint, style } => {
-            set_paint(context, paint);
+            set_paint(context, paint)?;
             let stroke = KurboStroke::new(style.width)
                 .with_miter_limit(style.miter_limit)
                 .with_caps(cap(style.line_cap))
@@ -192,7 +183,7 @@ fn color(value: Rgba) -> AlphaColor<Srgb> {
     AlphaColor::<Srgb>::from_rgba8(value.r, value.g, value.b, value.a)
 }
 
-fn set_paint(context: &mut HybridScene, paint: &Paint) {
+fn set_paint(context: &mut HybridScene, paint: &Paint) -> Result<(), String> {
     match paint {
         Paint::Solid(value) => context.set_paint(color(*value)),
         Paint::LinearGradient { start, end, stops } => {
@@ -207,5 +198,9 @@ fn set_paint(context: &mut HybridScene, paint: &Paint) {
             );
             context.set_paint(Gradient::new_linear(*start, *end).with_stops(stops));
         }
+        Paint::SvgPattern { .. } => {
+            return Err("SVG image/pattern paint is currently implemented by the CPU renderer; GPU texture binding support is still pending".to_string());
+        }
     }
+    Ok(())
 }
