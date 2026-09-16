@@ -273,6 +273,7 @@ mod tests {
         let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="12" height="4"><defs><pattern id="p" patternUnits="userSpaceOnUse" width="4" height="4"><rect width="2" height="4" fill="#ff0000"/><rect x="2" width="2" height="4" fill="#0000ff"/></pattern></defs><rect id="box" width="12" height="4" fill="url(#p)"/></svg>"##;
         let outcome = convert_svg(svg, "pattern.svg");
         assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+        assert!(!outcome.diagnostics.iter().any(|d| d.code == "S232" && d.severity == "warning"));
         let image = outcome.rendered.expect("pattern should render");
         let a = rgba_at(&image, 0, 1);
         let b = rgba_at(&image, 2, 1);
@@ -283,10 +284,23 @@ mod tests {
     }
 
     #[test]
+    fn object_bounding_box_pattern_scales_to_target_bounds() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="12" height="4"><defs><pattern id="p" patternContentUnits="objectBoundingBox" width="1" height="1"><rect width="0.5" height="1" fill="#ff0000"/><rect x="0.5" width="0.5" height="1" fill="#0000ff"/></pattern></defs><rect id="box" width="12" height="4" fill="url(#p)"/></svg>"##;
+        let outcome = convert_svg(svg, "bbox-pattern.svg");
+        assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+        let image = outcome.rendered.expect("objectBoundingBox pattern should render");
+        let left = rgba_at(&image, 2, 1);
+        let right = rgba_at(&image, 9, 1);
+        assert!(left[0] > left[2], "left half should be red: {left:?}");
+        assert!(right[2] > right[0], "right half should be blue: {right:?}");
+    }
+
+    #[test]
     fn figma_style_embedded_image_pattern_survives_defs_resolution() {
         let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="8" height="4"><defs><pattern id="p" patternContentUnits="objectBoundingBox" width="1" height="1"><use xlink:href="#img" transform="scale(0.5 1)"/></pattern><image id="img" width="2" height="1" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAADklEQVR4nGP4z8AAQv8BD/kD/YURmXYAAAAASUVORK5CYII="/></defs><rect id="box" width="8" height="4" fill="url(#p)"/></svg>"##;
         let outcome = convert_svg(svg, "embedded-pattern.svg");
         assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+        assert!(!outcome.diagnostics.iter().any(|d| d.code == "S232" && d.severity == "warning"));
         let image = outcome.rendered.expect("embedded image pattern should render");
         assert!(image.pixels.iter().any(|b| *b != 0));
     }
@@ -296,6 +310,7 @@ mod tests {
         let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><defs><mask id="m"><rect width="4" height="8" fill="#808080"/></mask></defs><rect id="box" width="8" height="8" fill="#ff0000" mask="url(#m)"/></svg>"##;
         let outcome = convert_svg(svg, "mask-complex.svg");
         assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+        assert!(!outcome.diagnostics.iter().any(|d| d.code == "S242" && d.severity == "warning"));
         let image = outcome.rendered.expect("complex mask should render");
         let inside = rgba_at(&image, 2, 2);
         let outside = rgba_at(&image, 6, 2);
