@@ -30,6 +30,11 @@ pub enum Paint {
         end: (f64, f64),
         stops: Vec<GradientStop>,
     },
+    SvgPattern {
+        svg: String,
+        tile_width: f64,
+        tile_height: f64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
