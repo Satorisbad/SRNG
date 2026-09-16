@@ -16,5 +16,7 @@ gpu = ["dep:vello_hybrid"]
 
 [dependencies]
 srng = { path = ".." }
+kurbo = "0.13.1"
+peniko = "0.6.1"
 vello_cpu = { version = "0.2.0", optional = true }
 vello_hybrid = { version = "0.2.0", optional = true }
