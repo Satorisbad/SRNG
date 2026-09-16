@@ -214,6 +214,10 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    fn alpha_at(image: &RgbaImage, x: usize, y: usize) -> u8 {
+        image.pixels[(y * image.width + x) * 4 + 3]
+    }
+
     #[test]
     fn svg_runs_through_importer_and_renderer() {
         let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="48"><rect id="box" x="4" y="5" width="40" height="30" fill="#ff0000"/></svg>"##;
@@ -224,6 +228,39 @@ mod tests {
         assert!(outcome.rendered.as_ref().is_some_and(|image| {
             image.width == 64 && image.height == 48 && image.pixels.iter().any(|b| *b != 0)
         }));
+    }
+
+    #[test]
+    fn rounded_rect_changes_corner_coverage() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect x="4" y="4" width="32" height="32" rx="10" fill="#ff0000"/></svg>"##;
+        let outcome = convert_svg(svg, "rounded.svg");
+        assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+        let image = outcome.rendered.unwrap();
+        assert_eq!(alpha_at(&image, 4, 4), 0);
+        assert!(alpha_at(&image, 20, 20) > 0);
+        assert!(!outcome.diagnostics.iter().any(|d| d.code == "S210"));
+    }
+
+    #[test]
+    fn clip_path_limits_rendered_pixels() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><defs><clipPath id="cut"><rect x="10" y="10" width="20" height="20"/></clipPath></defs><rect width="40" height="40" fill="#ff0000" clip-path="url(#cut)"/></svg>"##;
+        let outcome = convert_svg(svg, "clip.svg");
+        assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+        let image = outcome.rendered.unwrap();
+        assert_eq!(alpha_at(&image, 5, 5), 0);
+        assert!(alpha_at(&image, 20, 20) > 0);
+        assert_eq!(alpha_at(&image, 35, 35), 0);
+    }
+
+    #[test]
+    fn simple_white_mask_behaves_as_binary_clip() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><defs><mask id="m"><circle cx="20" cy="20" r="10" fill="white"/></mask></defs><rect width="40" height="40" fill="#00ff00" mask="url(#m)"/></svg>"##;
+        let outcome = convert_svg(svg, "mask.svg");
+        assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+        let image = outcome.rendered.unwrap();
+        assert_eq!(alpha_at(&image, 2, 2), 0);
+        assert!(alpha_at(&image, 20, 20) > 0);
+        assert!(!outcome.diagnostics.iter().any(|d| d.code == "S242"));
     }
 
     #[test]
