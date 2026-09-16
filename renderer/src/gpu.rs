@@ -4,7 +4,116 @@ use peniko::{
     color::{AlphaColor, Srgb},
     ColorStop, ColorStops, Fill, Gradient,
 };
-use vello_hybrid::Scene as HybridScene;
+use std::fmt;
+use vello_hybrid::{
+    RenderSize, RenderTargetConfig, Renderer as HybridRenderer, Resources, Scene as HybridScene,
+    TextureBindings,
+};
+use wgpu::{CommandEncoder, Device, Queue, TextureFormat, TextureView};
+
+#[derive(Debug)]
+pub enum GpuRenderError {
+    Scene(Vec<RenderDiagnostic>),
+    Backend(String),
+}
+
+impl fmt::Display for GpuRenderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Scene(diagnostics) => write!(
+                f,
+                "scene preparation produced {} renderer diagnostic(s)",
+                diagnostics.len()
+            ),
+            Self::Backend(message) => write!(f, "GPU renderer error: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for GpuRenderError {}
+
+/// Persistent Vello Hybrid renderer state for one target format and maximum target size.
+///
+/// The caller owns the wgpu device, queue, command encoder, target texture/view and submission.
+/// `render_to_view` records SRNG rendering commands into the supplied encoder.
+#[derive(Debug)]
+pub struct GpuRenderer {
+    renderer: HybridRenderer,
+    resources: Resources,
+    target_width: u32,
+    target_height: u32,
+    target_format: TextureFormat,
+}
+
+impl GpuRenderer {
+    pub fn new(
+        device: &Device,
+        target_format: TextureFormat,
+        target_width: u32,
+        target_height: u32,
+    ) -> Self {
+        let config = RenderTargetConfig {
+            format: target_format,
+            width: target_width.max(1),
+            height: target_height.max(1),
+        };
+        let (renderer, resources) = HybridRenderer::new(device, &config);
+        Self {
+            renderer,
+            resources,
+            target_width: config.width,
+            target_height: config.height,
+            target_format,
+        }
+    }
+
+    pub fn target_format(&self) -> TextureFormat {
+        self.target_format
+    }
+
+    pub fn target_size(&self) -> (u32, u32) {
+        (self.target_width, self.target_height)
+    }
+
+    /// Records rendering commands for `scene` into `encoder` and writes into `view`.
+    ///
+    /// The prepared scene must not exceed the dimensions used to construct this renderer.
+    /// SRNG v0.1 does not currently expose external image textures, so an empty texture-binding
+    /// table is used. The caller submits the encoder through its normal wgpu workflow.
+    pub fn render_to_view(
+        &mut self,
+        scene: &PreparedScene,
+        device: &Device,
+        queue: &Queue,
+        encoder: &mut CommandEncoder,
+        view: &TextureView,
+    ) -> Result<(), GpuRenderError> {
+        let width = u32::from(scene.width);
+        let height = u32::from(scene.height);
+        if width > self.target_width || height > self.target_height {
+            return Err(GpuRenderError::Backend(format!(
+                "prepared scene {width}x{height} exceeds renderer target {}x{}",
+                self.target_width, self.target_height
+            )));
+        }
+
+        let hybrid_scene = build_scene(scene).map_err(GpuRenderError::Scene)?;
+        let render_size = RenderSize { width, height };
+        let texture_bindings = TextureBindings::new();
+        self.renderer
+            .render(
+                &hybrid_scene,
+                &mut self.resources,
+                device,
+                queue,
+                encoder,
+                &render_size,
+                view,
+                &texture_bindings,
+            )
+            .map_err(|error| GpuRenderError::Backend(error.to_string()))
+    }
+}
 
 pub fn build_scene(scene: &PreparedScene) -> Result<HybridScene, Vec<RenderDiagnostic>> {
     let mut output = HybridScene::new(scene.width, scene.height);
