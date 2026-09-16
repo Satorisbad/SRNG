@@ -28,8 +28,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.88"
       - run: cargo check --manifest-path renderer/Cargo.toml
       - run: cargo test --manifest-path renderer/Cargo.toml
 
@@ -43,6 +41,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.88"
       - run: cargo check --manifest-path renderer/Cargo.toml --no-default-features --features gpu
