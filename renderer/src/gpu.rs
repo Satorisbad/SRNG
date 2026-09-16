@@ -1,10 +1,10 @@
 use crate::{Command, FillRule, LineCap, LineJoin, Paint, PreparedScene, RenderDiagnostic, Rgba};
-use vello_hybrid::{
+use kurbo::{BezPath, Cap, Join, Stroke as KurboStroke};
+use peniko::{
     color::{AlphaColor, Srgb},
-    kurbo::{BezPath, Cap, Join, Stroke as KurboStroke},
-    peniko::{ColorStop, ColorStops, Fill, Gradient},
-    Scene as HybridScene,
+    ColorStop, ColorStops, Fill, Gradient,
 };
+use vello_hybrid::Scene as HybridScene;
 
 pub fn build_scene(scene: &PreparedScene) -> Result<HybridScene, Vec<RenderDiagnostic>> {
     let mut output = HybridScene::new(scene.width, scene.height);
