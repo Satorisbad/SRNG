@@ -2,7 +2,7 @@ use srng::svg::strip_svg_provenance;
 use srng_studio::{convert_svg, render_srng};
 
 #[test]
-fn supported_import_renders_identically_without_svg_prefixed_properties() {
+fn supported_import_renders_identically_as_pure_native_srng() {
     let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="48">
       <defs>
         <pattern id="p" patternUnits="userSpaceOnUse" width="8" height="8">
@@ -20,18 +20,29 @@ fn supported_import_renders_identically_without_svg_prefixed_properties() {
     assert!(!imported.has_errors(), "{:?}", imported.diagnostics);
     let normal = imported.rendered.expect("normal imported SRNG should render");
 
-    let stripped = strip_svg_provenance(&imported.srng);
+    let native_source = strip_svg_provenance(&imported.srng);
     assert!(
-        !stripped.lines().any(|line| line.trim_start().starts_with("svg-")),
-        "stripped SRNG still contains svg-* properties:\n{stripped}"
+        !native_source
+            .lines()
+            .any(|line| line.trim_start().starts_with("svg-")),
+        "native SRNG still contains svg-* properties:\n{native_source}"
     );
-    assert!(stripped.contains("pattern-ref:"));
-    assert!(stripped.contains("pattern-source:"));
-    assert!(stripped.contains("mask-ref:"));
-    assert!(stripped.contains("source-data:"));
-    assert!(stripped.contains("clip:"));
+    assert!(native_source.contains("pattern-ref:"));
+    assert!(native_source.contains("pattern-data:"));
+    assert!(native_source.contains("pattern-units:"));
+    assert!(native_source.contains("mask-ref:"));
+    assert!(native_source.contains("mask-data:"));
+    assert!(native_source.contains("mask-type:"));
+    assert!(native_source.contains("clip:"));
 
-    let (native, diagnostics) = render_srng(&stripped, "native-semantics.srng");
+    // The supported vector resources must no longer need raw SVG/XML payloads.
+    assert!(!native_source.contains("pattern-source:"));
+    assert!(!native_source.contains("source-data:"));
+    assert!(!native_source.contains("<defs"));
+    assert!(!native_source.contains("<pattern"));
+    assert!(!native_source.contains("<mask"));
+
+    let (native, diagnostics) = render_srng(&native_source, "native-semantics.srng");
     assert!(
         !diagnostics.iter().any(|d| d.severity == "error"),
         "native-only SRNG produced errors: {diagnostics:?}"
