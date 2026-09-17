@@ -1,8 +1,9 @@
 mod model;
 mod prepare;
+mod semantic;
 
 pub use model::*;
-pub use prepare::prepare_scene;
+pub use semantic::prepare_scene;
 
 #[cfg(feature = "cpu")]
 pub mod cpu;

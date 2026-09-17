@@ -1,4 +1,4 @@
-use srng::svg::{import_svg, ImportOptions};
+use srng::svg::{import_svg, strip_svg_provenance, ImportOptions};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,6 +18,7 @@ fn main() {
     let mut output: Option<PathBuf> = None;
     let mut stdout = false;
     let mut strict = false;
+    let mut native = false;
     let mut file_id: Option<String> = None;
 
     while let Some(arg) = args.next() {
@@ -31,6 +32,7 @@ fn main() {
             }
             "--stdout" => stdout = true,
             "--strict" => strict = true,
+            "--native" => native = true,
             "--file-id" => {
                 let Some(value) = args.next() else {
                     eprintln!("srng-svg: expected a value after --file-id");
@@ -76,15 +78,25 @@ fn main() {
         );
     }
 
+    let emitted = if native {
+        strip_svg_provenance(&imported.source)
+    } else {
+        imported.source.clone()
+    };
+
     if stdout {
-        print!("{}", imported.source);
+        print!("{emitted}");
     } else {
         let output = output.unwrap_or_else(|| default_output(&input));
-        if let Err(error) = fs::write(&output, &imported.source) {
+        if let Err(error) = fs::write(&output, &emitted) {
             eprintln!("srng-svg: could not write `{}`: {error}", output.display());
             std::process::exit(1);
         }
-        println!("imported {} -> {}", input, output.display());
+        if native {
+            println!("imported {} -> {} (native SRNG; SVG provenance stripped)", input, output.display());
+        } else {
+            println!("imported {} -> {}", input, output.display());
+        }
     }
 
     let strict_failure = strict
@@ -108,6 +120,8 @@ fn default_output(input: &str) -> PathBuf {
 
 fn usage() {
     eprintln!(
-        "Usage: srng-svg <input.svg> [-o output.srng] [--stdout] [--strict] [--file-id ID]"
+        "Usage: srng-svg <input.svg> [-o output.srng] [--stdout] [--strict] [--native] [--file-id ID]\n\
+         \n\
+         --native  Emit only native SRNG semantics, removing every svg-* provenance property"
     );
 }
