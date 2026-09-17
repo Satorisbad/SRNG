@@ -1,18 +1,5 @@
-use std::collections::BTreeMap;
-
 pub(super) fn parse_number(value: &str) -> Option<f64> {
     value.trim().trim_end_matches("px").parse().ok()
-}
-
-pub(super) fn property_number(
-    properties: &BTreeMap<String, String>,
-    key: &str,
-) -> Option<f64> {
-    unquote(properties.get(key)?)
-        .trim()
-        .trim_end_matches("px")
-        .parse()
-        .ok()
 }
 
 pub(super) fn resolve_coord(raw: &str, units: &str, origin: f64, extent: f64) -> f64 {
