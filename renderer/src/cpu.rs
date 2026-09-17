@@ -194,10 +194,6 @@ fn set_paint(context: &mut RenderContext, paint: &Paint) -> Result<(), String> {
 
 fn svg_options(svg: &str) -> resvg::usvg::Options<'static> {
     let mut options = resvg::usvg::Options::default();
-    // usvg intentionally starts with an empty font database. Loading fonts only
-    // for SVG fragments that actually contain text avoids penalizing patterns,
-    // masks, and embedded images while making the practical text fallback work
-    // on Linux/macOS with the host's installed fonts.
     if svg.contains("<text") || svg.contains("<tspan") {
         options.fontdb_mut().load_system_fonts();
     }
@@ -358,9 +354,17 @@ mod tests {
     }
 
     #[test]
-    fn text_svg_loads_system_fonts_when_available() {
-        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="24"><text x="2" y="18" font-family="sans-serif" font-size="16" fill="white">SRNG</text></svg>"##;
-        let (pixmap, _, _) = rasterize_pattern(svg, 64.0, 24.0).unwrap();
-        assert!(pixmap.data_as_u8_slice().chunks_exact(4).any(|p| p[3] > 0));
+    fn srng_text_fallback_renders_without_host_fonts() {
+        let source = "srng 0.1; node text label { position: 2px 18px; content: \"SRNG\"; font-size: 16px; fill: #ffffff; }";
+        let ir = srng::compile_to_json(source, "text-test.srng");
+        let mut options = RuntimeOptions::default();
+        options.viewport_width = 80.0;
+        options.viewport_height = 24.0;
+        let scene = execute_json(&ir, &options).unwrap();
+        let gate = RevisionGate::default();
+        let revision = gate.begin();
+        let output = render(&prepare_scene(&scene, revision, &gate));
+        assert!(!output.diagnostics.iter().any(|d| d.severity == "error"), "{:?}", output.diagnostics);
+        assert!(output.pixels.chunks_exact(4).any(|p| p[3] > 0));
     }
 }
