@@ -2,9 +2,10 @@ mod model;
 mod prepare;
 mod semantic;
 mod semantic_v4;
+mod semantic_v5;
 
 pub use model::*;
-pub use semantic_v4::prepare_scene;
+pub use semantic_v5::prepare_scene;
 
 #[cfg(feature = "cpu")]
 pub mod cpu;
