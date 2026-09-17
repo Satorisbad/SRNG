@@ -37,7 +37,7 @@ The importer/runtime/renderer stack currently covers:
 - repeating SVG patterns, object-bounding-box patterns, nested vector pattern content, and embedded data-image pattern content
 - standalone embedded `data:image/*` raster images
 - simple local `<use href="#id">` references to supported vector shapes
-- imported text position/content/font-family/font-size/font-weight/font-style/text-anchor with a practical renderer fallback when outline path data is not present
+- imported text position/content/font-family/font-size/font-weight/font-style/text-anchor with deterministic vector fallback geometry when outline path data is not present
 
 The v0.4 renderer bakes viewBox and transform matrices into geometry before normal preparation so hand-authored SRNG and imported SRNG share the same render command model.
 
@@ -53,7 +53,7 @@ Supported pattern and mask resources do not require `svg-*` metadata. The import
 - `href`, `use-data`, `use-fill`, `use-stroke`
 - text/font fields
 
-For features currently implemented through a compatibility raster step (for example radial gradients, text, or embedded raster images), any temporary SVG fragment is reconstructed in memory from SRNG-native properties. It is not required as source-of-truth data in native SRNG files.
+For features currently implemented through a compatibility raster step (for example radial gradients or embedded raster images), any temporary SVG fragment is reconstructed in memory from SRNG-native properties. It is not required as source-of-truth data in native SRNG files. The text fallback is generated directly as SRNG vector path geometry and therefore does not depend on a host font installation.
 
 `--native` output is regression-tested after all `svg-*` provenance is stripped.
 
@@ -69,7 +69,7 @@ Simple vector pattern children are encoded as native vector resource records. Mo
 
 ## Text
 
-Text remains a native SRNG declaration with content, position, and common font properties. When outline `data` is available, the renderer uses the normal vector path. Otherwise the practical v0.4 fallback rasterizes the text resource locally. This is intentionally not claimed to be a complete cross-platform shaping engine; font availability and complex-script shaping can still differ by environment.
+Text remains a native SRNG declaration with content, position, and common font properties. When outline `data` is available, the renderer uses the normal vector path. Otherwise v0.4 generates a deterministic built-in vector fallback for Latin letters, digits, common punctuation, and a visible fallback glyph for unsupported characters. This makes basic text rendering independent of the operating system's installed fonts. It is not a production-grade shaping engine: exact authored typefaces, ligatures, complex-script shaping, kerning, and full Unicode typography require a later dedicated text subsystem.
 
 ## Images and `<use>`
 
@@ -82,7 +82,7 @@ Conversion is diagnostic-first. Unsupported SVG semantics are preserved when pos
 The major remaining boundaries after the v0.4 fidelity milestone are intentionally larger subsystems rather than missing basic scene-graph features:
 
 - broad SVG filter graphs (`feGaussianBlur`, morphology, turbulence, lighting, complex filter composition, and similar primitives)
-- production-grade font discovery/shaping/outlining with deterministic behavior across all fonts and scripts
+- production-grade font discovery/shaping/outlining for exact authored fonts and full complex-script typography
 - arbitrary external/network resource loading (intentionally disabled by the security model)
 - highly advanced SVG paint-server inheritance/compositing combinations outside the tested v0.4 resource model
 
