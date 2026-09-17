@@ -1,4 +1,4 @@
-use super::common::{quote, unquote, xml_escape};
+use super::common::{quote, resolve_coord, unquote, xml_escape};
 use srng::runtime::{Geometry, Scene, SceneNode};
 use std::collections::BTreeMap;
 
@@ -121,26 +121,6 @@ pub(super) fn normalize(scene: &mut Scene) {
     }
 }
 
-fn resolve_coord(raw: &str, units: &str, origin: f64, extent: f64) -> f64 {
-    let raw = raw.trim();
-    if let Some(percent) = raw
-        .strip_suffix('%')
-        .and_then(|v| v.parse::<f64>().ok())
-    {
-        return if units == "objectBoundingBox" {
-            origin + extent * percent / 100.0
-        } else {
-            percent / 100.0
-        };
-    }
-    let value = raw.trim_end_matches("px").parse::<f64>().unwrap_or(0.0);
-    if units == "objectBoundingBox" {
-        origin + extent * value
-    } else {
-        value
-    }
-}
-
 fn svg_stops(value: &str) -> String {
     unquote(value)
         .split(',')
@@ -175,11 +155,6 @@ fn safe_id(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn percentage_object_bbox_coordinates_resolve() {
-        assert!((resolve_coord("50%", "objectBoundingBox", 10.0, 20.0) - 20.0).abs() < 1e-9);
-    }
 
     #[test]
     fn stop_records_become_svg_stops() {
