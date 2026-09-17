@@ -46,9 +46,12 @@ fn promote_native_semantics(source: &mut String) {
         ("svg-pattern-source-xml:", "pattern-source:"),
         ("svg-mask-ref:", "mask-ref:"),
         ("svg-mask-mode:", "mask-mode:"),
+        ("svg-attr-mask:", "mask-ref:"),
+        ("svg-source-tag:", "source-tag:"),
+        ("svg-source-xml:", "source-data:"),
     ];
 
-    let mut out = String::with_capacity(source.len() + source.len() / 12);
+    let mut out = String::with_capacity(source.len() + source.len() / 8);
     for line in source.lines() {
         out.push_str(line);
         out.push('\n');
@@ -93,6 +96,8 @@ mod tests {
         assert!(stripped.contains("pattern-width:"));
         assert!(stripped.contains("pattern-height:"));
         assert!(stripped.contains("pattern-source:"));
+        assert!(stripped.contains("source-tag: \"defs\";"));
+        assert!(stripped.contains("source-data:"));
         assert!(!stripped.lines().any(|line| line.trim_start().starts_with("svg-")));
     }
 
@@ -102,6 +107,18 @@ mod tests {
         let result = import_svg(svg, "mask.svg", &ImportOptions::default());
         let stripped = strip_svg_provenance(&result.source);
         assert!(stripped.contains("mask-mode: \"binary-opaque-clip\";"));
+        assert!(stripped.contains("mask-ref: \"url(#m)\";"));
         assert!(stripped.contains("clip:"));
+    }
+
+    #[test]
+    fn complex_mask_keeps_native_resource_reference_after_strip() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><defs><mask id="m"><rect width="10" height="20" fill="#808080"/></mask></defs><rect id="box" width="20" height="20" fill="#fff" mask="url(#m)"/></svg>"##;
+        let result = import_svg(svg, "mask.svg", &ImportOptions::default());
+        let stripped = strip_svg_provenance(&result.source);
+        assert!(stripped.contains("mask-ref: \"url(#m)\";"));
+        assert!(stripped.contains("source-tag: \"defs\";"));
+        assert!(stripped.contains("source-data:"));
+        assert!(!stripped.lines().any(|line| line.trim_start().starts_with("svg-")));
     }
 }
