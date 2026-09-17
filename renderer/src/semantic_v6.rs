@@ -1,14 +1,17 @@
 use crate::{PreparedScene, RevisionGate};
-use srng::runtime::Scene;
+use srng::runtime::{Geometry, Scene, SceneNode};
+use std::collections::BTreeMap;
 
 /// Normalizes radial-gradient resources before the transform/opacity passes.
 /// The v4 layer already represents them natively; this pass only builds the
-/// temporary local compatibility pattern in a form accepted consistently by
-/// resvg on Linux and macOS. SRNG remains the source of truth.
+/// temporary local compatibility resource consumed by the current pattern
+/// rasterizer. SRNG remains the source of truth.
 pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> PreparedScene {
     let mut normalized = scene.clone();
     let vw = normalized.viewport.width;
     let vh = normalized.viewport.height;
+    let mut resources = Vec::new();
+
     for node in &mut normalized.nodes {
         if node
             .properties
@@ -72,20 +75,53 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
         );
         let id = format!("__radial_{}", safe_id(&node.id));
         let gradient_id = format!("{id}_gradient");
-        let xml = format!(
-            "<pattern id=\"{id}\" patternUnits=\"userSpaceOnUse\" width=\"{vw}\" height=\"{vh}\"><defs><radialGradient id=\"{gradient_id}\" gradientUnits=\"userSpaceOnUse\" cx=\"{cx}\" cy=\"{cy}\" r=\"{r}\" fx=\"{fx}\" fy=\"{fy}\">{stops}</radialGradient></defs><rect x=\"0\" y=\"0\" width=\"{vw}\" height=\"{vh}\" fill=\"url(#{gradient_id})\"/></pattern>"
+        let gradient = format!(
+            "<radialGradient id=\"{gradient_id}\" gradientUnits=\"userSpaceOnUse\" cx=\"{cx}\" cy=\"{cy}\" r=\"{r}\" fx=\"{fx}\" fy=\"{fy}\">{stops}</radialGradient>"
         );
+        let pattern = format!(
+            "<pattern id=\"{id}\" patternUnits=\"userSpaceOnUse\" width=\"{vw}\" height=\"{vh}\"><rect x=\"0\" y=\"0\" width=\"{vw}\" height=\"{vh}\" fill=\"url(#{gradient_id})\"/></pattern>"
+        );
+        let standalone = format!(
+            "<pattern id=\"{id}\" patternUnits=\"userSpaceOnUse\" width=\"{vw}\" height=\"{vh}\"><defs>{gradient}</defs><rect x=\"0\" y=\"0\" width=\"{vw}\" height=\"{vh}\" fill=\"url(#{gradient_id})\"/></pattern>"
+        );
+
         node.properties.insert("pattern-ref".into(), quote(&id));
         node.properties
             .insert("pattern-width".into(), format!("{vw}px"));
         node.properties
             .insert("pattern-height".into(), format!("{vh}px"));
         node.properties
-            .insert("pattern-source".into(), quote(&xml));
-        // Prevent the older compatibility constructor from replacing this
-        // validated resource. Native gradient properties stay in the scene.
+            .insert("pattern-source".into(), quote(&standalone));
         node.properties.remove("gradient-kind");
+
+        resources.push(format!("{gradient}{pattern}"));
     }
+
+    if !resources.is_empty() {
+        let mut properties = BTreeMap::new();
+        properties.insert("fill".into(), "none".into());
+        properties.insert("stroke".into(), "none".into());
+        properties.insert("svg-source-tag".into(), quote("defs"));
+        properties.insert(
+            "svg-source-xml".into(),
+            quote(&format!("<defs>{}</defs>", resources.join(""))),
+        );
+        normalized.nodes.push(SceneNode {
+            id: "__srng_radial_resources".into(),
+            kind: "group".into(),
+            source: normalized.source.clone(),
+            properties,
+            geometry: Geometry {
+                x: Some(0.0),
+                y: Some(0.0),
+                width: Some(0.0),
+                height: Some(0.0),
+            },
+            paint_order: usize::MAX - 1,
+            active: true,
+        });
+    }
+
     crate::semantic_v5::prepare_scene(&normalized, revision, gate)
 }
 
@@ -130,7 +166,13 @@ fn svg_stops(value: &str) -> String {
 fn safe_id(value: &str) -> String {
     value
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
