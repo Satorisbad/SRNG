@@ -1,3 +1,4 @@
+use super::common::{quote, unquote, xml_escape};
 use srng::runtime::{Geometry, Scene, SceneNode};
 use std::collections::BTreeMap;
 
@@ -150,8 +151,8 @@ fn svg_stops(value: &str) -> String {
             }
             Some(format!(
                 "<stop offset=\"{}\" stop-color=\"{}\"/>",
-                escape(fields[0]),
-                escape(fields[1])
+                xml_escape(fields[0]),
+                xml_escape(fields[1])
             ))
         })
         .collect::<Vec<_>>()
@@ -169,39 +170,6 @@ fn safe_id(value: &str) -> String {
             }
         })
         .collect()
-}
-
-fn unquote(value: &str) -> String {
-    let value = value.trim();
-    let Some(inner) = value
-        .strip_prefix('"')
-        .and_then(|v| v.strip_suffix('"'))
-    else {
-        return value.to_string();
-    };
-    inner
-        .replace("\\n", "\n")
-        .replace("\\\"", "\"")
-        .replace("\\\\", "\\")
-}
-
-fn quote(value: &str) -> String {
-    format!(
-        "\"{}\"",
-        value
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-    )
-}
-
-fn escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
 }
 
 #[cfg(test)]
