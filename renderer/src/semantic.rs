@@ -1,3 +1,4 @@
+mod common;
 mod compatibility;
 mod geometry;
 mod opacity;
