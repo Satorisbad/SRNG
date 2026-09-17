@@ -1,3 +1,4 @@
+use super::common::{fmt, parse_number, quote, unquote};
 use srng::runtime::Scene;
 
 /// Supplies deterministic vector geometry for semantic SRNG text nodes that
@@ -128,45 +129,6 @@ fn glyph(ch: char) -> [u8; 7] {
         ':' => [0,0b00100,0,0,0b00100,0,0],
         '/' => [0b00001,0b00010,0b00100,0b01000,0b10000,0,0],
         _ => [0b11111,0b10001,0b00101,0b00100,0b10100,0b10001,0b11111],
-    }
-}
-
-fn parse_number(value: &str) -> Option<f64> {
-    value.trim().trim_end_matches("px").parse().ok()
-}
-
-fn unquote(value: &str) -> String {
-    let value = value.trim();
-    let Some(inner) = value
-        .strip_prefix('"')
-        .and_then(|v| v.strip_suffix('"'))
-    else {
-        return value.to_string();
-    };
-    inner
-        .replace("\\n", "\n")
-        .replace("\\\"", "\"")
-        .replace("\\\\", "\\")
-}
-
-fn quote(value: &str) -> String {
-    format!(
-        "\"{}\"",
-        value
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-    )
-}
-
-fn fmt(value: f64) -> String {
-    if value.fract().abs() < 1e-9 {
-        format!("{}", value as i64)
-    } else {
-        format!("{value:.6}")
-            .trim_end_matches('0')
-            .trim_end_matches('.')
-            .to_string()
     }
 }
 
