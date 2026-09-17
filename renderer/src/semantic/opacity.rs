@@ -1,28 +1,24 @@
-use crate::{PreparedScene, RevisionGate};
+use super::common::unquote;
 use srng::runtime::Scene;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
-/// Final v0.4 semantic normalization layer.
-///
-/// SVG group opacity affects descendants. The v4 geometry/paint normalizer
-/// intentionally works per-node, so this layer resolves cumulative opacity
-/// through active `contains` relations before delegating to it.
-pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> PreparedScene {
-    let mut normalized = scene.clone();
-    let parents = normalized
+/// Resolves SVG-style cumulative group opacity through active containment
+/// relations before geometry/paint normalization consumes the final value.
+pub(super) fn normalize(scene: &mut Scene) {
+    let parents = scene
         .relations
         .iter()
         .filter(|r| r.active && r.kind.as_deref() == Some("contains"))
         .map(|r| (r.to.clone(), r.from.clone()))
         .collect::<HashMap<_, _>>();
-    let authored = normalized
+    let authored = scene
         .nodes
         .iter()
         .map(|n| (n.id.clone(), node_opacity(&n.properties)))
         .collect::<HashMap<_, _>>();
 
     let mut memo = HashMap::new();
-    for node in &mut normalized.nodes {
+    for node in &mut scene.nodes {
         let mut visiting = HashSet::new();
         let opacity = cumulative_opacity(&node.id, &parents, &authored, &mut memo, &mut visiting);
         if opacity < 1.0 - f64::EPSILON {
@@ -31,8 +27,6 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
             node.properties.remove("opacity");
         }
     }
-
-    crate::semantic_v4::prepare_scene(&normalized, revision, gate)
 }
 
 fn cumulative_opacity(
@@ -59,7 +53,7 @@ fn cumulative_opacity(
     value
 }
 
-fn node_opacity(props: &std::collections::BTreeMap<String, String>) -> f64 {
+fn node_opacity(props: &BTreeMap<String, String>) -> f64 {
     props
         .get("opacity")
         .map(|v| unquote(v))
@@ -68,19 +62,9 @@ fn node_opacity(props: &std::collections::BTreeMap<String, String>) -> f64 {
         .clamp(0.0, 1.0)
 }
 
-fn unquote(value: &str) -> String {
-    let value = value.trim();
-    value
-        .strip_prefix('"')
-        .and_then(|v| v.strip_suffix('"'))
-        .unwrap_or(value)
-        .to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
 
     #[test]
     fn cumulative_group_opacity_multiplies() {

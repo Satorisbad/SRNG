@@ -1,18 +1,16 @@
-use crate::{PreparedScene, RevisionGate};
+use super::common::{quote, resolve_coord, unquote, xml_escape};
 use srng::runtime::{Geometry, Scene, SceneNode};
 use std::collections::BTreeMap;
 
-/// Normalizes radial-gradient resources before the transform/opacity passes.
-/// The v4 layer already represents them natively; this pass only builds the
-/// temporary local compatibility resource consumed by the current pattern
-/// rasterizer. SRNG remains the source of truth.
-pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> PreparedScene {
-    let mut normalized = scene.clone();
-    let vw = normalized.viewport.width;
-    let vh = normalized.viewport.height;
+/// Converts native radial-gradient declarations into the temporary local
+/// compatibility resources consumed by the current pattern rasterizer.
+/// Native SRNG properties remain the source of truth.
+pub(super) fn normalize(scene: &mut Scene) {
+    let vw = scene.viewport.width;
+    let vh = scene.viewport.height;
     let mut resources = Vec::new();
 
-    for node in &mut normalized.nodes {
+    for node in &mut scene.nodes {
         if node
             .properties
             .get("gradient-kind")
@@ -106,10 +104,10 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
             "svg-source-xml".into(),
             quote(&format!("<defs>{}</defs>", resources.join(""))),
         );
-        normalized.nodes.push(SceneNode {
+        scene.nodes.push(SceneNode {
             id: "__srng_radial_resources".into(),
             kind: "group".into(),
-            source: normalized.source.clone(),
+            source: scene.source.clone(),
             properties,
             geometry: Geometry {
                 x: Some(0.0),
@@ -120,28 +118,6 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
             paint_order: usize::MAX - 1,
             active: true,
         });
-    }
-
-    crate::semantic_v5::prepare_scene(&normalized, revision, gate)
-}
-
-fn resolve_coord(raw: &str, units: &str, origin: f64, extent: f64) -> f64 {
-    let raw = raw.trim();
-    if let Some(percent) = raw
-        .strip_suffix('%')
-        .and_then(|v| v.parse::<f64>().ok())
-    {
-        return if units == "objectBoundingBox" {
-            origin + extent * percent / 100.0
-        } else {
-            percent / 100.0
-        };
-    }
-    let value = raw.trim_end_matches("px").parse::<f64>().unwrap_or(0.0);
-    if units == "objectBoundingBox" {
-        origin + extent * value
-    } else {
-        value
     }
 }
 
@@ -155,8 +131,8 @@ fn svg_stops(value: &str) -> String {
             }
             Some(format!(
                 "<stop offset=\"{}\" stop-color=\"{}\"/>",
-                escape(fields[0]),
-                escape(fields[1])
+                xml_escape(fields[0]),
+                xml_escape(fields[1])
             ))
         })
         .collect::<Vec<_>>()
@@ -176,47 +152,9 @@ fn safe_id(value: &str) -> String {
         .collect()
 }
 
-fn unquote(value: &str) -> String {
-    let value = value.trim();
-    let Some(inner) = value
-        .strip_prefix('"')
-        .and_then(|v| v.strip_suffix('"'))
-    else {
-        return value.to_string();
-    };
-    inner
-        .replace("\\n", "\n")
-        .replace("\\\"", "\"")
-        .replace("\\\\", "\\")
-}
-
-fn quote(value: &str) -> String {
-    format!(
-        "\"{}\"",
-        value
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-    )
-}
-
-fn escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn percentage_object_bbox_coordinates_resolve() {
-        assert!((resolve_coord("50%", "objectBoundingBox", 10.0, 20.0) - 20.0).abs() < 1e-9);
-    }
 
     #[test]
     fn stop_records_become_svg_stops() {

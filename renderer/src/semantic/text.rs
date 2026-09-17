@@ -1,13 +1,10 @@
-use crate::{PreparedScene, RevisionGate};
+use super::common::{fmt, parse_number, quote, unquote};
 use srng::runtime::Scene;
 
-/// Provides a deterministic, dependency-free text fallback before the SVG
-/// compatibility passes. Imported text remains semantic SRNG (`content`,
-/// font-size, text-anchor, etc.), while this pass supplies simple vector
-/// geometry when no pre-shaped outline data is present.
-pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> PreparedScene {
-    let mut normalized = scene.clone();
-    for node in &mut normalized.nodes {
+/// Supplies deterministic vector geometry for semantic SRNG text nodes that
+/// do not already carry shaped outline data.
+pub(super) fn normalize(scene: &mut Scene) {
+    for node in &mut scene.nodes {
         if !node.active || node.kind != "text" || node.properties.contains_key("data") {
             continue;
         }
@@ -47,7 +44,6 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
         node.geometry.width = Some(width);
         node.geometry.height = Some(size);
     }
-    crate::semantic_v6::prepare_scene(&normalized, revision, gate)
 }
 
 fn bitmap_text_path(text: &str, x: f64, baseline_y: f64, size: f64, anchor: &str) -> (String, f64) {
@@ -133,45 +129,6 @@ fn glyph(ch: char) -> [u8; 7] {
         ':' => [0,0b00100,0,0,0b00100,0,0],
         '/' => [0b00001,0b00010,0b00100,0b01000,0b10000,0,0],
         _ => [0b11111,0b10001,0b00101,0b00100,0b10100,0b10001,0b11111],
-    }
-}
-
-fn parse_number(value: &str) -> Option<f64> {
-    value.trim().trim_end_matches("px").parse().ok()
-}
-
-fn unquote(value: &str) -> String {
-    let value = value.trim();
-    let Some(inner) = value
-        .strip_prefix('"')
-        .and_then(|v| v.strip_suffix('"'))
-    else {
-        return value.to_string();
-    };
-    inner
-        .replace("\\n", "\n")
-        .replace("\\\"", "\"")
-        .replace("\\\\", "\\")
-}
-
-fn quote(value: &str) -> String {
-    format!(
-        "\"{}\"",
-        value
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-    )
-}
-
-fn fmt(value: f64) -> String {
-    if value.fract().abs() < 1e-9 {
-        format!("{}", value as i64)
-    } else {
-        format!("{value:.6}")
-            .trim_end_matches('0')
-            .trim_end_matches('.')
-            .to_string()
     }
 }
 
