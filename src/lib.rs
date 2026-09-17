@@ -8,6 +8,8 @@ mod svg_import_impl;
 #[path = "svg.rs"]
 mod svg_base;
 #[path = "svg_v4.rs"]
+mod svg_v4;
+#[path = "svg_final.rs"]
 pub mod svg;
 #[path = "runtime_v2.rs"]
 pub mod runtime;
