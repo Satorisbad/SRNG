@@ -5,18 +5,25 @@ This document explains how the repository implements the SRNG v0.1 format and ho
 ## Repository layers
 
 ```text
-src/lexer.rs                source tokenization
-src/parser.rs               fault-tolerant source parser and source validation
-src/ir.rs                   SRNG-IR JSON emitter
-src/runtime_v2.rs           public runtime assembly
-src/runtime_v2/model.rs     SRNG-SCENE structures and runtime options
-src/runtime_v2/execute.rs   IR-to-scene execution
-src/runtime_v2/geometry.rs  units and geometry resolution
-src/runtime_v2/resolve.rs   local/cross-file reference resolution
-renderer/src/model.rs       backend-neutral render command model
-renderer/src/prepare.rs     SRNG-SCENE to render-command preparation
-renderer/src/cpu.rs         Vello CPU implementation
-renderer/src/gpu.rs         Vello Hybrid/wgpu implementation
+src/lexer.rs                         source tokenization
+src/parser.rs                        fault-tolerant source parser and source validation
+src/ir.rs                            SRNG-IR JSON emitter
+src/runtime_v2.rs                    public runtime assembly
+src/runtime_v2/model.rs              SRNG-SCENE structures and runtime options
+src/runtime_v2/execute.rs            IR-to-scene execution
+src/runtime_v2/geometry.rs           units and geometry resolution
+src/runtime_v2/resolve.rs            local/cross-file reference resolution
+renderer/src/model.rs                backend-neutral render command model
+renderer/src/semantic.rs             single semantic-normalization entry point
+renderer/src/semantic/text.rs        deterministic fallback text geometry
+renderer/src/semantic/radial.rs      radial resource normalization
+renderer/src/semantic/opacity.rs     inherited opacity resolution
+renderer/src/semantic/geometry.rs    transforms, paint, mask, clip, image/use normalization
+renderer/src/semantic/compatibility.rs native-resource compatibility bridge
+renderer/src/semantic/common.rs      shared semantic parsing/serialization helpers
+renderer/src/prepare.rs              normalized scene to render-command preparation
+renderer/src/cpu.rs                  Vello CPU implementation
+renderer/src/gpu.rs                  Vello Hybrid/wgpu implementation
 ```
 
 ## Compiler flow
@@ -87,23 +94,42 @@ The preparation stage merges both categories and sorts by `paint_order`. Do not 
 
 ## Renderer architecture
 
-The preparation stage is backend-neutral.
+The renderer has one public semantic preparation entry point: `renderer::prepare_scene`, implemented by `renderer/src/semantic.rs`. Do not add version-numbered semantic wrappers or make one semantic pass call another public `prepare_scene` function. New normalization work belongs in a responsibility-based stage under `renderer/src/semantic/` and must be wired into the explicit ordered pipeline.
+
+Current normalization order is:
 
 ```text
 SRNG-SCENE
-    -> prepare_scene
+    -> text normalization
+    -> radial resource normalization
+    -> inherited opacity normalization
+    -> geometry / transform / paint / mask / clip / image-use normalization
+    -> native resource compatibility bridge
+    -> backend-neutral command preparation
     -> PreparedScene
-       - dimensions
-       - revision
-       - Fill commands
-       - Stroke commands
-       - PushClip commands
-       - PopClip commands
-       - renderer diagnostics
+```
+
+The ordering is part of the implementation contract. For example, deterministic text geometry exists before transforms are baked, radial resources exist before paint normalization consumes them, and cumulative group opacity is resolved before per-paint alpha is baked.
+
+The compatibility stage is intentionally the final semantic stage. It may reconstruct temporary SVG/XML resources in memory for renderer paths that still require them, but native SRNG properties remain the source of truth. Do not move compatibility reconstruction earlier as a shortcut for adding new format semantics.
+
+After semantic normalization, the shared preparation stage remains backend-neutral:
+
+```text
+PreparedScene
+    - dimensions
+    - revision
+    - Fill commands
+    - Stroke commands
+    - PushClip commands
+    - PopClip commands
+    - renderer diagnostics
     -> CPU or GPU backend
 ```
 
 This shared preparation layer is required for behavioral parity between software and hardware rendering.
+
+The renderer crate uses the conventional `renderer/src/lib.rs` library entry point. `lib2.rs` and the old `semantic_vN.rs` layering are intentionally removed; do not reintroduce parallel entry points.
 
 ## Revision gate
 
@@ -216,18 +242,18 @@ CPU pixel-buffer generation
 GPU backend compile/type compatibility
 ```
 
+Renderer refactors must additionally keep the SVG/native-semantic Studio regression suite green. Architectural cleanup is not an excuse to change pixels or silently drop diagnostics.
+
 ## Known v0.1 non-goals
 
 The following are intentionally not completed format semantics:
 
 - automatic relational layout
-- native text shaping from font/content declarations
+- production-grade exact-font shaping/outlining for all fonts and scripts
 - timeline animation execution
 - network reference loading
-- raster image resource bindings
-- opaque filter/effect stacks
 - guaranteed linear-light compositing
 - ICC or wide-gamut color management
 - platform window creation/presentation
 
-These features may be added by later SRNG versions without changing the core v0.1 rule that compilation, runtime resolution, and rendering are separate stages.
+These features may be added by later SRNG versions without changing the core v0.1 rule that compilation, runtime resolution, semantic normalization, command preparation, and rendering are separate stages.
