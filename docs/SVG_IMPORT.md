@@ -1,122 +1,108 @@
 # SVG import into SRNG
 
-`srng-svg` is the reference SVG-to-SRNG importer. It is intentionally separate from the SRNG compiler: the importer translates SVG semantics into SRNG source, then the normal compiler/runtime/renderer pipeline handles that SRNG exactly like hand-authored SRNG.
+`srng-svg` is the reference SVG-to-SRNG importer. It translates SVG semantics into SRNG source and then uses the normal compiler/runtime/renderer pipeline. The importer never bypasses the SRNG scene contract.
 
-## Basic conversion
-
-```bash
-cargo run --bin srng-svg -- artwork.svg -o artwork.srng
-```
-
-To print generated SRNG instead of writing a file:
-
-```bash
-cargo run --bin srng-svg -- artwork.svg --stdout
-```
-
-`--strict` makes warnings fail the command. This is useful for fidelity-sensitive conversion jobs because unsupported SVG features can never be missed silently.
-
-```bash
-cargo run --bin srng-svg -- artwork.svg --strict
-```
-
-## Visual validation
-
-The CPU renderer includes a PNG output command. This gives a simple end-to-end check on macOS or Linux:
+## Conversion
 
 ```bash
 cargo run --bin srng-svg -- artwork.svg -o artwork.srng
-cargo run --manifest-path renderer/Cargo.toml --bin srng-render -- artwork.srng -o artwork-srng.png
+cargo run --bin srng-svg -- artwork.svg --native -o artwork-native.srng
 ```
 
-Open `artwork.svg` and `artwork-srng.png` side by side. The PNG command automatically uses the first active SRNG `canvas` size as its viewport unless `--viewport WIDTHxHEIGHT` is supplied.
+`--native` removes `svg-*` provenance after native SRNG properties/resources have been emitted. `--stdout` prints the result instead of writing it. `--strict` treats remaining warnings as a failing conversion, which is useful for fidelity-sensitive jobs.
 
-The native Studio application provides the same pipeline visually:
+## Rendering and Studio
 
 ```bash
+cargo run --manifest-path renderer/Cargo.toml --bin srng-render -- artwork.srng -o artwork.png
 cargo run --manifest-path studio/Cargo.toml
 ```
 
-## Current mappings
+The renderer derives its viewport from the first active SRNG canvas unless `--viewport WIDTHxHEIGHT` is supplied.
 
-The importer currently maps these SVG structures directly:
+## v0.4 supported mappings
 
-- `<svg>` -> `canvas`
-- `<g>` and `<symbol>` -> `group` plus `contains` relations
-- `<rect>` -> `rect`; `rx`/`ry` rectangles are baked into curved path geometry
-- `<circle>` -> `circle`
-- `<ellipse>` -> `ellipse`
-- `<path>` -> SRNG `path` with the original SVG path data
-- `<line>` -> SRNG path data
-- `<polyline>` / `<polygon>` -> SRNG path data
-- `<text>` / `<tspan>` -> SRNG text declarations with content retained
-- `<clipPath>` -> SRNG clip geometry for supported vector children
-- simple opaque-white `<mask>` geometry -> SRNG clip geometry
-- general SVG masks -> preserved SVG mask resources composited by the CPU renderer
-- SVG `<pattern>` fills -> repeating SVG tile paint, including Figma-style embedded data-image patterns
+The importer/runtime/renderer stack currently covers:
 
-Pattern rendering distinguishes `patternUnits="userSpaceOnUse"` from SVG's default `objectBoundingBox` units. Object-bounding-box tile sizes are resolved against the geometry receiving the paint instead of being treated as one-pixel user-space tiles.
+- `<svg>` canvas geometry plus root `viewBox` and `preserveAspectRatio`
+- `<g>` / `<symbol>` hierarchy through explicit `contains` relations
+- `<rect>` including rounded corners, `<circle>`, `<ellipse>`, `<path>`, `<line>`, `<polyline>`, `<polygon>`
+- transform lists: `matrix`, `translate`, `scale`, `rotate`, `skewX`, `skewY`, including inherited group transforms
+- `opacity`, `fill-opacity`, and `stroke-opacity`, including inherited group opacity
+- fills/strokes, fill rules, line caps/joins, dash arrays/offsets, and common SVG lengths
+- native linear-gradient resources and radial-gradient rendering
+- `<clipPath>` vector geometry including `objectBoundingBox` handling for supported shapes
+- simple binary masks as clips and general vector alpha/luminance masks through isolated compositing
+- `maskContentUnits` coordinate conversion and retained mask region/unit metadata
+- repeating SVG patterns, object-bounding-box patterns, nested vector pattern content, and embedded data-image pattern content
+- standalone embedded `data:image/*` raster images
+- simple local `<use href="#id">` references to supported vector shapes
+- imported text position/content/font-family/font-size/font-weight/font-style/text-anchor with deterministic vector fallback geometry when outline path data is not present
 
-It resolves common SVG lengths (`px`, `pt`, `mm`, `cm`, `in`, `%`, or unitless SVG user units) to pixel geometry at 96 DPI. Presentation attributes and inline `style` declarations are merged with SVG inheritance for the currently supported paint/stroke fields.
+The v0.4 renderer bakes viewBox and transform matrices into geometry before normal preparation so hand-authored SRNG and imported SRNG share the same render command model.
 
-The importer normalizes supported paints including hexadecimal colors, `none`, a small core named-color set, integer `rgb(r,g,b)` values, and the supported pattern paint-server path. The SRNG renderer remains the authority for final paint behavior.
+## Native resource semantics
+
+Supported pattern and mask resources do not require `svg-*` metadata. The importer emits SRNG-native fields such as:
+
+- `pattern-ref`, `pattern-width`, `pattern-height`, `pattern-data`
+- `mask-ref`, `mask-data`, `mask-type`, mask unit/region metadata
+- `clip`
+- `gradient-kind`, `gradient-units`, gradient coordinates/stops
+- `transform`, opacity fields
+- `href`, `use-data`, `use-fill`, `use-stroke`
+- text/font fields
+
+For features currently implemented through a compatibility raster step (for example radial gradients or embedded raster images), any temporary SVG fragment is reconstructed in memory from SRNG-native properties. It is not required as source-of-truth data in native SRNG files. The text fallback is generated directly as SRNG vector path geometry and therefore does not depend on a host font installation.
+
+`--native` output is regression-tested after all `svg-*` provenance is stripped.
 
 ## Masks and clipping
 
-Supported clip paths are converted into SRNG clip nodes and applied by the renderer. Simple opaque masks use the same vector clipping path when that conversion is lossless.
+Supported clip shapes become SRNG path geometry. `clipPathUnits="objectBoundingBox"` is resolved against the receiving node before rendering.
 
-Masks that need alpha/luminance semantics are retained through `<defs>` and evaluated by the CPU renderer. Masked content is first rendered into an isolated offscreen RGBA layer, the SVG mask is rasterized, its alpha is applied to the isolated layer, and the result is composited back into the scene. This avoids relying on backend-specific native mask-layer behavior.
+Simple opaque-white masks may be reduced to vector clips. General vector masks are rendered into an isolated layer. Luminance masks convert RGB luminance to alpha before the existing alpha compositor is applied, so gray mask values produce partial transparency rather than behaving as fully opaque alpha masks.
 
-## Pattern fills
+## Patterns
 
-Pattern definitions remain preserved in SRNG metadata for provenance. During CPU preparation they are reconstructed as an SVG tile, rasterized locally, and painted with repeat sampling. This supports vector tiles and embedded `data:` raster images referenced from `<defs>`.
-
-The implementation currently handles the common Figma export shape where a pattern defaults to `objectBoundingBox`, has `width="1" height="1"`, and references an embedded image through `<use>`.
-
-## Loss prevention
-
-Conversion is deliberately diagnostic-first. Unsupported SVG semantics are not silently discarded.
-
-When `preserve_source_attributes` is enabled (the default), original SVG attributes are stored as `svg-attr-*` SRNG properties. Unsupported elements are represented by non-rendering metadata nodes containing `svg-source-xml`. Non-rendering SVG subtrees such as `<defs>` are likewise preserved as metadata instead of accidentally painting their definition children.
-
-The importer emits `Sxxx` diagnostics for fidelity gaps. Important remaining gaps include:
-
-- root `viewBox` transformations when the viewBox does not directly match the viewport
-- general element `transform`
-- opacity / fill-opacity / stroke-opacity outside the SVG mask/pattern resource path
-- filters
-- SVG gradient paint servers imported through `url(#gradient)`
-- standalone `<image>` raster content
-- `<use>` expansion/reference conversion outside preserved SVG resources
-- advanced clip-path unit/transform combinations
-- text shaping/outlining
-
-Pattern and complex-mask capability diagnostics are informational in the current public SVG facade rather than stale unsupported-feature warnings.
-
-The source data for remaining unsupported cases is retained so later importer revisions can upgrade the conversion without requiring the original author to reconstruct lost information.
+Simple vector pattern children are encoded as native vector resource records. More complex nested pattern content can retain a compatibility resource when required, and the CPU renderer rasterizes the tile locally with repeat sampling. `patternUnits="userSpaceOnUse"` and object-bounding-box tile sizing are distinguished.
 
 ## Text
 
-SRNG v0.1 stores imported text and its position, but the current renderer requires text to be pre-shaped into outline path data. Therefore text import emits `S301`. This is a known renderer/import boundary, not silent data loss.
+Text remains a native SRNG declaration with content, position, and common font properties. When outline `data` is available, the renderer uses the normal vector path. Otherwise v0.4 generates a deterministic built-in vector fallback for Latin letters, digits, common punctuation, and a visible fallback glyph for unsupported characters. This makes basic text rendering independent of the operating system's installed fonts. It is not a production-grade shaping engine: exact authored typefaces, ligatures, complex-script shaping, kerning, and full Unicode typography require a later dedicated text subsystem.
 
-## IDs and hierarchy
+## Images and `<use>`
 
-SVG IDs are sanitized into legal SRNG identifiers and made unique deterministically. SVG parent/child structure is emitted as explicit `relation parent -> child { kind: contains; }` declarations. Rendering order remains declaration order.
+Embedded `data:image/*` image content can render as a standalone image through the local renderer path. Network resources are never fetched. Simple `<use>` references to supported local vector shapes are expanded to native geometry and preserve the referenced fill/stroke. More complex symbol/use inheritance remains diagnostic-first rather than silently approximated.
 
-## Security model
+## Fault tolerance and remaining boundaries
 
-The importer parses the supplied XML locally. It does not fetch network resources. External images, CSS, fonts and linked SVG resources are not downloaded by the importer. Embedded data images already present in the SVG may be rendered as part of a preserved pattern resource. This keeps import deterministic and avoids hidden network access from untrusted input.
+Conversion is diagnostic-first. Unsupported SVG semantics are preserved when possible and reported rather than silently discarded.
 
-## Intended pipeline
+The major remaining boundaries after the v0.4 fidelity milestone are intentionally larger subsystems rather than missing basic scene-graph features:
+
+- broad SVG filter graphs (`feGaussianBlur`, morphology, turbulence, lighting, complex filter composition, and similar primitives)
+- production-grade font discovery/shaping/outlining for exact authored fonts and full complex-script typography
+- arbitrary external/network resource loading (intentionally disabled by the security model)
+- highly advanced SVG paint-server inheritance/compositing combinations outside the tested v0.4 resource model
+
+These boundaries do not prevent ordinary SRNG vector scenes from compiling/rendering; unsupported portions continue to produce diagnostics while unaffected content renders.
+
+## IDs, hierarchy, and security
+
+SVG IDs are sanitized into deterministic legal SRNG identifiers. Parent/child structure is emitted as explicit `relation parent -> child { kind: contains; }` declarations and declaration order remains paint order.
+
+The importer parses supplied XML locally. It does not fetch network resources, external CSS, external fonts, linked SVGs, or remote images. Embedded resources already contained in the input may be rendered locally.
+
+## Pipeline
 
 ```text
 SVG
   -> srng-svg importer
   -> SRNG source
-  -> srng compiler / SRNG-IR
+  -> compiler / SRNG-IR
   -> runtime / SRNG-SCENE
+  -> semantic normalization
   -> renderer preparation
   -> CPU PNG or host-owned GPU target
 ```
-
-The importer is an input adapter. It does not bypass or duplicate the SRNG compiler/runtime contract.
