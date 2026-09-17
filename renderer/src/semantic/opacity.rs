@@ -1,3 +1,4 @@
+use super::common::unquote;
 use srng::runtime::Scene;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -59,15 +60,6 @@ fn node_opacity(props: &BTreeMap<String, String>) -> f64 {
         .and_then(|v| v.parse::<f64>().ok())
         .unwrap_or(1.0)
         .clamp(0.0, 1.0)
-}
-
-fn unquote(value: &str) -> String {
-    let value = value.trim();
-    value
-        .strip_prefix('"')
-        .and_then(|v| v.strip_suffix('"'))
-        .unwrap_or(value)
-        .to_string()
 }
 
 #[cfg(test)]
