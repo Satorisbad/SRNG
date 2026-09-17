@@ -7,7 +7,7 @@ pub mod parser;
 mod svg_import_impl;
 #[path = "svg.rs"]
 mod svg_base;
-#[path = "svg_complete.rs"]
+#[path = "svg_v4.rs"]
 pub mod svg;
 #[path = "runtime_v2.rs"]
 pub mod runtime;
