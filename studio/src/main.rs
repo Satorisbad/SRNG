@@ -250,7 +250,6 @@ impl StudioApp {
 impl eframe::App for StudioApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_dropped_files(ctx);
-
         let dragging_files = ctx.input(|input| !input.raw.hovered_files.is_empty());
 
         egui::TopBottomPanel::top("toolbar")
@@ -290,7 +289,6 @@ impl eframe::App for StudioApp {
                     {
                         self.save_png();
                     }
-
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let name = if self.svg_source.is_empty() {
                             "No file loaded"
@@ -319,24 +317,20 @@ impl eframe::App for StudioApp {
                     ui.selectable_value(&mut self.info_tab, InfoTab::Diagnostics, "Diagnostics");
                     ui.selectable_value(&mut self.info_tab, InfoTab::Metadata, "SVG metadata");
                     ui.separator();
-
                     match self.info_tab {
                         InfoTab::Diagnostics => {
-                            let text = self.diagnostics_text();
                             if ui.button("Copy diagnostics").clicked() {
-                                self.copy_text(ctx, "diagnostics", text);
+                                self.copy_text(ctx, "diagnostics", self.diagnostics_text());
                             }
                         }
                         InfoTab::Metadata => {
-                            let text = self.metadata_text();
                             if ui.button("Copy metadata").clicked() {
-                                self.copy_text(ctx, "metadata", text);
+                                self.copy_text(ctx, "metadata", self.metadata_text());
                             }
                         }
                     }
                 });
                 ui.separator();
-
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| match self.info_tab {
@@ -346,42 +340,27 @@ impl eframe::App for StudioApp {
                             } else {
                                 for diagnostic in &self.diagnostics {
                                     ui.horizontal_wrapped(|ui| {
-                                        let level = match diagnostic.severity.as_str() {
-                                            "error" => egui::RichText::new(format!(
+                                        ui.label(
+                                            egui::RichText::new(format!(
                                                 "{}[{}]",
                                                 diagnostic.severity, diagnostic.code
                                             ))
+                                            .monospace()
                                             .strong(),
-                                            "warning" => egui::RichText::new(format!(
-                                                "{}[{}]",
-                                                diagnostic.severity, diagnostic.code
-                                            ))
-                                            .strong(),
-                                            _ => egui::RichText::new(format!(
-                                                "{}[{}]",
-                                                diagnostic.severity, diagnostic.code
-                                            )),
-                                        };
-                                        ui.monospace(level.text());
+                                        );
                                         ui.label(&diagnostic.message);
                                     });
                                 }
                             }
                         }
                         InfoTab::Metadata => {
-                            ui.add(
-                                egui::TextEdit::multiline(&mut self.metadata_text())
-                                    .code_editor()
-                                    .interactive(false)
-                                    .desired_width(f32::INFINITY),
-                            );
+                            ui.monospace(self.metadata_text());
                         }
                     });
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add_space(6.0);
-
             if self.svg_source.is_empty() {
                 let available = ui.available_size();
                 ui.allocate_ui_with_layout(
@@ -411,7 +390,7 @@ impl eframe::App for StudioApp {
                         egui::vec2(half, preview_height),
                         egui::Layout::top_down(egui::Align::LEFT),
                         |ui| {
-                            panel_header(ui, "Original SVG", Some("Source rendered by resvg"));
+                            panel_header(ui, "Original SVG", "Source rendered by resvg");
                             preview_panel(
                                 ui,
                                 self.original_texture.as_ref(),
@@ -425,7 +404,7 @@ impl eframe::App for StudioApp {
                         egui::vec2(half, preview_height),
                         egui::Layout::top_down(egui::Align::LEFT),
                         |ui| {
-                            panel_header(ui, "SRNG Render", Some("Rendered by the SRNG CPU renderer"));
+                            panel_header(ui, "SRNG Render", "Rendered by the SRNG CPU renderer");
                             preview_panel(
                                 ui,
                                 self.rendered_texture.as_ref(),
@@ -439,7 +418,7 @@ impl eframe::App for StudioApp {
 
             ui.separator();
             ui.horizontal(|ui| {
-                panel_header(ui, "Generated SRNG", Some("Editable before re-rendering"));
+                panel_header(ui, "Generated SRNG", "Editable before re-rendering");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Copy SRNG").clicked() {
                         self.copy_text(ctx, "SRNG", self.srng_source.clone());
@@ -475,12 +454,10 @@ impl eframe::App for StudioApp {
     }
 }
 
-fn panel_header(ui: &mut egui::Ui, title: &str, subtitle: Option<&str>) {
+fn panel_header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(title).strong().size(16.0));
-        if let Some(subtitle) = subtitle {
-            ui.small(subtitle);
-        }
+        ui.small(subtitle);
     });
 }
 
@@ -496,8 +473,7 @@ fn preview_panel(
     empty: &str,
 ) {
     ui.add_space(4.0);
-    let frame = egui::Frame::group(ui.style()).inner_margin(egui::Margin::same(8));
-    frame.show(ui, |ui| {
+    egui::Frame::group(ui.style()).show(ui, |ui| {
         let available = ui.available_size();
         let Some(texture) = texture else {
             ui.allocate_ui_with_layout(
