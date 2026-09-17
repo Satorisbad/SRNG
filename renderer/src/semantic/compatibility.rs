@@ -1,3 +1,4 @@
+use super::common::{quote, unquote, xml_escape};
 use srng::runtime::{Geometry, Scene, SceneNode};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -144,9 +145,9 @@ fn pattern_xml(properties: &BTreeMap<String, String>) -> Option<String> {
     let shapes = native_shapes_xml(&data)?;
     Some(format!(
         "<pattern id=\"{}\" patternUnits=\"{}\" patternContentUnits=\"{}\" width=\"{}\" height=\"{}\">{}</pattern>",
-        escape(&id),
-        escape(&units),
-        escape(&content_units),
+        xml_escape(&id),
+        xml_escape(&units),
+        xml_escape(&content_units),
         width,
         height,
         shapes
@@ -162,8 +163,8 @@ fn mask_xml(id: &str, properties: &BTreeMap<String, String>) -> Option<String> {
     let shapes = native_shapes_xml(&data)?;
     Some(format!(
         "<mask id=\"{}\" style=\"mask-type:{}\">{}</mask>",
-        escape(id),
-        escape(&mode),
+        xml_escape(id),
+        xml_escape(&mode),
         shapes
     ))
 }
@@ -173,9 +174,9 @@ fn native_shapes_xml(data: &str) -> Option<String> {
     for record in data.lines().filter(|line| !line.trim().is_empty()) {
         let (fill, path) = record.split_once('|')?;
         xml.push_str("<path d=\"");
-        xml.push_str(&escape(path.trim()));
+        xml.push_str(&xml_escape(path.trim()));
         xml.push_str("\" fill=\"");
-        xml.push_str(&escape(fill.trim()));
+        xml.push_str(&xml_escape(fill.trim()));
         xml.push_str("\"/>");
     }
     if xml.is_empty() { None } else { Some(xml) }
@@ -197,58 +198,6 @@ fn number(value: &str) -> Option<f64> {
         .unwrap_or(trimmed)
         .replace(' ', "");
     numeric.parse().ok()
-}
-
-fn unquote(value: &str) -> String {
-    let trimmed = value.trim();
-    let Some(inner) = trimmed
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-    else {
-        return trimmed.to_string();
-    };
-    let mut out = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
-    while let Some(ch) = chars.next() {
-        if ch != '\\' {
-            out.push(ch);
-            continue;
-        }
-        match chars.next() {
-            Some('\\') => out.push('\\'),
-            Some('"') => out.push('"'),
-            Some('n') => out.push('\n'),
-            Some('r') => out.push('\r'),
-            Some('t') => out.push('\t'),
-            Some(other) => {
-                out.push('\\');
-                out.push(other);
-            }
-            None => out.push('\\'),
-        }
-    }
-    out
-}
-
-fn quote(value: &str) -> String {
-    format!(
-        "\"{}\"",
-        value
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r")
-            .replace('\t', "\\t")
-    )
-}
-
-fn escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
 }
 
 #[cfg(test)]
