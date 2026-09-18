@@ -1,5 +1,5 @@
 use srng::runtime::{execute_json, RuntimeOptions};
-use srng_renderer::{prepare_scene, Command, FilterOp, GradientSpread, Paint, RevisionGate};
+use srng_renderer::{prepare_scene, Command, FilterPrimitive, GradientSpread, Paint, RevisionGate};
 
 fn scene(source: &str) -> srng::runtime::Scene {
     let ir = srng::compile_to_json(source, "native-svg-v05.srng");
@@ -75,8 +75,11 @@ rect filtered {
     let prepared = prepare_scene(&scene(source), revision, &gate);
     assert!(prepared.commands.iter().any(|command| matches!(
         command,
-        Command::PushFilter { filters }
-            if matches!(filters.as_slice(), [FilterOp::GaussianBlur { .. }, FilterOp::Offset { .. }])
+        Command::PushFilter { graph }
+            if matches!(graph.nodes.as_slice(), [
+                srng_renderer::FilterNode { op: FilterPrimitive::GaussianBlur { .. }, .. },
+                srng_renderer::FilterNode { op: FilterPrimitive::Offset { .. }, .. }
+            ])
     )));
     assert!(prepared.commands.iter().any(|command| matches!(command, Command::PopFilter)));
 }
