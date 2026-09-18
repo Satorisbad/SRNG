@@ -75,6 +75,6 @@ fn stops(values:&[crate::GradientStop])->ColorStops{ColorStops(values.iter().map
 fn set_paint(context:&mut HybridScene,paint:&Paint)->Result<(),String>{match paint{
     Paint::Solid(value)=>context.set_paint(color(*value)),
     Paint::LinearGradient{start,end,stops:values}=>context.set_paint(Gradient::new_linear(*start,*end).with_stops(stops(values))),
-    Paint::RadialGradient{center,focal,radius,stops:values}=>context.set_paint(Gradient::new_two_point_radial(*focal,0.0,*center,*radius).with_stops(stops(values))),
+    Paint::RadialGradient{center,focal,radius,stops:values}=>context.set_paint(Gradient::new_two_point_radial(*focal,0.0,*center,*radius as f32).with_stops(stops(values))),
     Paint::SvgPattern{..}=>return Err("SVG image/pattern paint is currently implemented by the CPU renderer; GPU texture binding support is still pending".into()),
 }Ok(())}
