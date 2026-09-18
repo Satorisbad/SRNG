@@ -25,6 +25,10 @@ pub enum Command {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EmbeddedImage {
     pub href: String,
+    pub codec: crate::ImageCodec,
+    pub intrinsic_width: u32,
+    pub intrinsic_height: u32,
+    pub pixels: Vec<u8>,
     pub x: f64,
     pub y: f64,
     pub width: f64,
@@ -39,93 +43,44 @@ pub enum FilterOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct PathData {
-    pub svg: String,
-}
+pub struct PathData { pub svg: String }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct VectorRecord {
-    pub path: PathData,
-    pub paint: Paint,
-}
+pub struct VectorRecord { pub path: PathData, pub paint: Paint }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GradientSpread {
-    Pad,
-    Repeat,
-    Reflect,
-}
+pub enum GradientSpread { Pad, Repeat, Reflect }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Paint {
     Solid(Rgba),
-    LinearGradient {
-        start: (f64, f64),
-        end: (f64, f64),
-        stops: Vec<GradientStop>,
-        spread: GradientSpread,
-    },
-    RadialGradient {
-        center: (f64, f64),
-        focal: (f64, f64),
-        focal_radius: f64,
-        radius: f64,
-        stops: Vec<GradientStop>,
-        spread: GradientSpread,
-    },
-    Pattern {
-        records: Vec<VectorRecord>,
-        tile_width: f64,
-        tile_height: f64,
-    },
-    SvgPattern {
-        svg: String,
-        tile_width: f64,
-        tile_height: f64,
-    },
+    LinearGradient { start:(f64,f64), end:(f64,f64), stops:Vec<GradientStop>, spread:GradientSpread },
+    RadialGradient { center:(f64,f64), focal:(f64,f64), focal_radius:f64, radius:f64, stops:Vec<GradientStop>, spread:GradientSpread },
+    Pattern { records:Vec<VectorRecord>, tile_width:f64, tile_height:f64 },
+    SvgPattern { svg:String, tile_width:f64, tile_height:f64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Rgba {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-    pub a: u8,
-}
+pub struct Rgba { pub r:u8, pub g:u8, pub b:u8, pub a:u8 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GradientStop {
-    pub offset: f32,
-    pub color: Rgba,
-}
+pub struct GradientStop { pub offset:f32, pub color:Rgba }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FillRule {
-    NonZero,
-    EvenOdd,
-}
+pub enum FillRule { NonZero, EvenOdd }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StrokeStyle {
-    pub width: f64,
-    pub miter_limit: f64,
-    pub line_cap: LineCap,
-    pub line_join: LineJoin,
-    pub dash: Vec<f64>,
-    pub dash_offset: f64,
+    pub width:f64,
+    pub miter_limit:f64,
+    pub line_cap:LineCap,
+    pub line_join:LineJoin,
+    pub dash:Vec<f64>,
+    pub dash_offset:f64,
 }
 
 impl Default for StrokeStyle {
-    fn default() -> Self {
-        Self {
-            width: 1.0,
-            miter_limit: 4.0,
-            line_cap: LineCap::Butt,
-            line_join: LineJoin::Miter,
-            dash: Vec::new(),
-            dash_offset: 0.0,
-        }
-    }
+    fn default()->Self{Self{width:1.0,miter_limit:4.0,line_cap:LineCap::Butt,line_join:LineJoin::Miter,dash:Vec::new(),dash_offset:0.0}}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,17 +89,12 @@ pub enum LineCap { Butt, Round, Square }
 pub enum LineJoin { Miter, Round, Bevel }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RenderDiagnostic {
-    pub severity: String,
-    pub code: String,
-    pub message: String,
-    pub declaration: Option<String>,
-}
+pub struct RenderDiagnostic { pub severity:String, pub code:String, pub message:String, pub declaration:Option<String> }
 
 #[derive(Debug, Default)]
 pub struct RevisionGate(AtomicU64);
 impl RevisionGate {
-    pub fn begin(&self) -> u64 { self.0.fetch_add(1, Ordering::SeqCst) + 1 }
-    pub fn current(&self) -> u64 { self.0.load(Ordering::SeqCst) }
-    pub fn is_current(&self, revision: u64) -> bool { self.current() == revision }
+    pub fn begin(&self)->u64{self.0.fetch_add(1,Ordering::SeqCst)+1}
+    pub fn current(&self)->u64{self.0.load(Ordering::SeqCst)}
+    pub fn is_current(&self,revision:u64)->bool{self.current()==revision}
 }
