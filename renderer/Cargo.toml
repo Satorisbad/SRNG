@@ -17,7 +17,7 @@ required-features = ["cpu"]
 [features]
 default = ["cpu"]
 cpu = ["dep:vello_cpu", "dep:png", "dep:resvg"]
-gpu = ["dep:vello_hybrid", "dep:wgpu"]
+gpu = ["dep:vello_hybrid", "dep:wgpu", "dep:png", "dep:resvg"]
 
 [dependencies]
 srng = { path = ".." }
