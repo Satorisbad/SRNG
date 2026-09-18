@@ -135,7 +135,7 @@ pub fn parse_filter_graph(raw: &str, region: FilterRegion) -> Result<(FilterGrap
                 FilterPrimitive::Flood { color: parse_hex_color(value)? }
             }
             "merge" | "feMerge" => {
-                let values = fields.get("inputs").map(|v| v.split(|c| c == ',' || c == '|').filter(|s| !s.is_empty()).map(|s| parse_input(s.trim())).collect()).unwrap_or_else(|| positional_tokens(args).into_iter().map(|s| parse_input(&s)).collect());
+                let values: Vec<FilterInput> = fields.get("inputs").map(|v| v.split(|c| c == ',' || c == '|').filter(|s| !s.is_empty()).map(|s| parse_input(s.trim())).collect()).unwrap_or_else(|| positional_tokens(args).into_iter().map(|s| parse_input(&s)).collect());
                 if values.is_empty() { return Err("feMerge requires at least one input".into()); }
                 FilterPrimitive::Merge { inputs: values }
             }
