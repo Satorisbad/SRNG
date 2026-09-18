@@ -1,7 +1,8 @@
 use crate::{Command, EmbeddedImage, FillRule, FilterOp, GradientSpread, LineCap, LineJoin, Paint, PreparedScene, RenderDiagnostic, Rgba, VectorRecord};
-use kurbo::{Affine, BezPath, Cap, Join, Rect, Stroke as KurboStroke};
+use kurbo::{Affine, BezPath, Cap, Join, Shape, Stroke as KurboStroke};
 use peniko::{color::{AlphaColor, Srgb}, ColorStop, ColorStops, Extend, Fill, Gradient, ImageQuality};
 use std::{collections::HashMap, fmt, io::Cursor};
+use vello_common::geometry::RectU16;
 use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer as HybridRenderer, Resources, SampleRect, Scene as HybridScene, TextureBindings, TextureId};
 use wgpu::{CommandEncoder, Device, Extent3d, Origin3d, Queue, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor};
 
@@ -94,15 +95,15 @@ fn apply_vector_only(context:&mut HybridScene,command:&Command)->Result<(),Strin
     Command::Stroke{path,paint,style}=>{set_vector_paint(context,paint)?;let stroke=KurboStroke::new(style.width).with_miter_limit(style.miter_limit).with_caps(cap(style.line_cap)).with_join(join(style.line_join)).with_dashes(style.dash_offset,style.dash.iter());context.set_stroke(stroke);context.stroke_path(&parse_path(&path.svg)?);}}
     Ok(())}
 
-fn draw_image(context:&mut HybridScene,image:&EmbeddedImage,device:&Device,queue:&Queue,resources:&mut GpuResourceStore)->Result<(),String>{let(decoded,sw,sh)=decode_data_image(&image.href)?;let texture=GpuTexture::new_rgba8(device,queue,"srng-embedded-image",sw,sh,&decoded)?;let id=resources.insert(texture);let(x,y,w,h)=fit_image(image.x,image.y,image.width,image.height,f64::from(sw),f64::from(sh),&image.preserve_aspect_ratio);let source=vello_hybrid::RectU16::new(0,0,sw as u16,sh as u16);context.draw_texture_rects(id,ImageQuality::Medium,[SampleRect{source_region:source,transform:Affine::translate((x,y))*Affine::scale_non_uniform(w/f64::from(sw),h/f64::from(sh))}]);Ok(())}
+fn draw_image(context:&mut HybridScene,image:&EmbeddedImage,device:&Device,queue:&Queue,resources:&mut GpuResourceStore)->Result<(),String>{let(decoded,sw,sh)=decode_data_image(&image.href)?;let texture=GpuTexture::new_rgba8(device,queue,"srng-embedded-image",sw,sh,&decoded)?;let id=resources.insert(texture);let(x,y,w,h)=fit_image(image.x,image.y,image.width,image.height,f64::from(sw),f64::from(sh),&image.preserve_aspect_ratio);let source=RectU16::new(0,0,sw as u16,sh as u16);context.draw_texture_rects(id,ImageQuality::Medium,[SampleRect{source_region:source,transform:Affine::translate((x,y))*Affine::scale_non_uniform(w/f64::from(sw),h/f64::from(sh))}]);Ok(())}
 
 fn texture_paint(paint:&Paint,device:&Device,queue:&Queue,resources:&mut GpuResourceStore)->Result<Option<TextureId>,String>{match paint{
     Paint::Pattern{records,tile_width,tile_height}=>{let(rgba,w,h)=rasterize_pattern_records(records,*tile_width,*tile_height)?;let id=resources.insert(GpuTexture::new_rgba8(device,queue,"srng-vector-pattern",w,h,&rgba)?);Ok(Some(id))},
     Paint::SvgPattern{svg,tile_width,tile_height}=>{let(rgba,w,h)=rasterize_svg(svg,*tile_width,*tile_height)?;let id=resources.insert(GpuTexture::new_rgba8(device,queue,"srng-raster-pattern",w,h,&rgba)?);Ok(Some(id))},
     _=>Ok(None)}}
 
-fn fill_path_with_texture(context:&mut HybridScene,path:&BezPath,texture_id:TextureId){let bounds=path.bounding_box();context.push_clip_path(path);let tw=bounds.width().ceil().max(1.0) as u16;let th=bounds.height().ceil().max(1.0) as u16;let source=vello_hybrid::RectU16::new(0,0,tw,th);context.draw_texture_rects(texture_id,ImageQuality::Medium,[SampleRect{source_region:source,transform:Affine::translate((bounds.x0,bounds.y0))}]);context.pop_clip_path();}
-fn draw_texture_fullscreen(context:&mut HybridScene,id:TextureId,width:u16,height:u16){let source=vello_hybrid::RectU16::new(0,0,width,height);context.draw_texture_rects(id,ImageQuality::Medium,[SampleRect{source_region:source,transform:Affine::IDENTITY}]);}
+fn fill_path_with_texture(context:&mut HybridScene,path:&BezPath,texture_id:TextureId){let bounds=path.bounding_box();context.push_clip_path(path);let tw=bounds.width().ceil().max(1.0) as u16;let th=bounds.height().ceil().max(1.0) as u16;let source=RectU16::new(0,0,tw,th);context.draw_texture_rects(texture_id,ImageQuality::Medium,[SampleRect{source_region:source,transform:Affine::translate((bounds.x0,bounds.y0))}]);context.pop_clip_path();}
+fn draw_texture_fullscreen(context:&mut HybridScene,id:TextureId,width:u16,height:u16){let source=RectU16::new(0,0,width,height);context.draw_texture_rects(id,ImageQuality::Medium,[SampleRect{source_region:source,transform:Affine::IDENTITY}]);}
 
 fn set_vector_paint(context:&mut HybridScene,paint:&Paint)->Result<(),String>{match paint{Paint::Solid(v)=>context.set_paint(color(*v)),Paint::LinearGradient{start,end,stops:values,spread}=>context.set_paint(Gradient::new_linear(*start,*end).with_stops(stops(values)).with_extend(extend(*spread))),Paint::RadialGradient{center,focal,focal_radius,radius,stops:values,spread}=>context.set_paint(Gradient::new_two_point_radial(*focal,*focal_radius as f32,*center,*radius as f32).with_stops(stops(values)).with_extend(extend(*spread))),Paint::Pattern{..}|Paint::SvgPattern{..}=>return Err("texture-backed paint requires GPU resource execution".into())}Ok(())}
 
