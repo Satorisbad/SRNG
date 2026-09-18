@@ -118,7 +118,11 @@ fn resolve_target_in_document(
                     &mut sink,
                 )
                 .ok_or_else(|| failure("R235", format!("invalid target `{target_id}`")))?;
-                if !node.active {
+                let resource_only = node
+                    .properties
+                    .get("resource-only")
+                    .is_some_and(|value| unquote(value) == "true");
+                if !node.active && !resource_only {
                     return Err(failure(
                         "R235",
                         format!("target `{target_id}` has invalid geometry"),
@@ -129,7 +133,6 @@ fn resolve_target_in_document(
                     document,
                     document_path,
                     base_dir,
-                    &identity_path,
                     target_id,
                     options,
                     depth,
@@ -183,7 +186,6 @@ fn collect_resource_subtree(
     document: &IrDocument,
     document_path: Option<&Path>,
     base_dir: &Path,
-    identity_path: &Path,
     root_id: &str,
     options: &RuntimeOptions,
     depth: usize,
@@ -209,7 +211,6 @@ fn collect_resource_subtree(
         document,
         document_path,
         base_dir,
-        identity_path,
         root_id,
         root_id,
         &children,
@@ -227,7 +228,6 @@ fn collect_resource_children(
     document: &IrDocument,
     document_path: Option<&Path>,
     base_dir: &Path,
-    identity_path: &Path,
     parent_id: &str,
     root_id: &str,
     children: &HashMap<String, Vec<String>>,
@@ -256,7 +256,11 @@ fn collect_resource_children(
                     &mut sink,
                 )
                 .ok_or_else(|| failure("R235", format!("invalid resource node `{child_id}`")))?;
-                if node.active {
+                let resource_only = node
+                    .properties
+                    .get("resource-only")
+                    .is_some_and(|value| unquote(value) == "true");
+                if node.active || resource_only {
                     output.push(ResolvedResourceNode {
                         id: format!("{root_id}::{child_id}"),
                         source_id: child_id.clone(),
@@ -273,7 +277,6 @@ fn collect_resource_children(
                     document,
                     document_path,
                     base_dir,
-                    identity_path,
                     child_id,
                     root_id,
                     children,
@@ -312,7 +315,7 @@ fn collect_resource_children(
                         kind: target.kind,
                         source: document.source.clone(),
                         properties: merge_resource_properties(&target.properties, &nested.properties),
-                        geometry: merge_resource_geometry(&target.geometry, &nested.geometry),
+                        geometry: offset_resource_geometry(&target.geometry, &nested.geometry),
                         parent_source_id: Some(parent_id.to_string()),
                         paint_order: *order,
                     });
@@ -322,7 +325,7 @@ fn collect_resource_children(
                         let mut resolved = resolved;
                         resolved.id = format!("{root_id}::{child_id}::{}", resolved.source_id);
                         resolved.properties = merge_resource_properties(&resolved.properties, &nested.properties);
-                        resolved.geometry = merge_resource_geometry(&resolved.geometry, &nested.geometry);
+                        resolved.geometry = offset_resource_geometry(&resolved.geometry, &nested.geometry);
                         resolved.parent_source_id = Some(parent_id.to_string());
                         resolved.paint_order = *order;
                         *order += 1;
@@ -333,14 +336,13 @@ fn collect_resource_children(
             _ => {}
         }
     }
-    let _ = identity_path;
     Ok(())
 }
 
-fn merge_resource_geometry(linked: &Geometry, authored: &Geometry) -> Geometry {
+fn offset_resource_geometry(linked: &Geometry, authored: &Geometry) -> Geometry {
     Geometry {
-        x: authored.x.or(linked.x),
-        y: authored.y.or(linked.y),
+        x: match (linked.x, authored.x) { (Some(x), Some(dx)) => Some(x + dx), (x, None) => x, (None, x) => x },
+        y: match (linked.y, authored.y) { (Some(y), Some(dy)) => Some(y + dy), (y, None) => y, (None, y) => y },
         width: authored.width.or(linked.width),
         height: authored.height.or(linked.height),
     }
