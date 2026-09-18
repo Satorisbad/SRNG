@@ -15,8 +15,27 @@ pub enum Command {
     PopClip,
     PushMask { records: Vec<VectorRecord> },
     PopMask,
+    PushFilter { filters: Vec<FilterOp> },
+    PopFilter,
+    DrawImage { image: EmbeddedImage },
     Fill { path: PathData, paint: Paint, rule: FillRule },
     Stroke { path: PathData, paint: Paint, style: StrokeStyle },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmbeddedImage {
+    pub href: String,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub preserve_aspect_ratio: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FilterOp {
+    GaussianBlur { sigma_x: f64, sigma_y: f64 },
+    Offset { dx: f64, dy: f64 },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,6 +49,13 @@ pub struct VectorRecord {
     pub paint: Paint,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GradientSpread {
+    Pad,
+    Repeat,
+    Reflect,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Paint {
     Solid(Rgba),
@@ -37,12 +63,15 @@ pub enum Paint {
         start: (f64, f64),
         end: (f64, f64),
         stops: Vec<GradientStop>,
+        spread: GradientSpread,
     },
     RadialGradient {
         center: (f64, f64),
         focal: (f64, f64),
+        focal_radius: f64,
         radius: f64,
         stops: Vec<GradientStop>,
+        spread: GradientSpread,
     },
     Pattern {
         records: Vec<VectorRecord>,
@@ -100,18 +129,9 @@ impl Default for StrokeStyle {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LineCap {
-    Butt,
-    Round,
-    Square,
-}
-
+pub enum LineCap { Butt, Round, Square }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LineJoin {
-    Miter,
-    Round,
-    Bevel,
-}
+pub enum LineJoin { Miter, Round, Bevel }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderDiagnostic {
@@ -123,17 +143,8 @@ pub struct RenderDiagnostic {
 
 #[derive(Debug, Default)]
 pub struct RevisionGate(AtomicU64);
-
 impl RevisionGate {
-    pub fn begin(&self) -> u64 {
-        self.0.fetch_add(1, Ordering::SeqCst) + 1
-    }
-
-    pub fn current(&self) -> u64 {
-        self.0.load(Ordering::SeqCst)
-    }
-
-    pub fn is_current(&self, revision: u64) -> bool {
-        self.current() == revision
-    }
+    pub fn begin(&self) -> u64 { self.0.fetch_add(1, Ordering::SeqCst) + 1 }
+    pub fn current(&self) -> u64 { self.0.load(Ordering::SeqCst) }
+    pub fn is_current(&self, revision: u64) -> bool { self.current() == revision }
 }
