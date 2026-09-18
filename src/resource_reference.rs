@@ -237,8 +237,6 @@ fn geometry_properties(node: Node<'_, '_>, viewport_width: f64, viewport_height:
         "g" | "symbol" | "svg" => {
             props.insert("position".into(), "0px 0px".into());
             props.insert("size".into(), "0px 0px".into());
-            props.insert("fill".into(), "none".into());
-            props.insert("stroke".into(), "none".into());
         }
         "rect" => {
             let x = length(node.attribute("x"), viewport_width, 0.0);
