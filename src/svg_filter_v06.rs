@@ -51,13 +51,13 @@ fn promote_filters(source:&mut String,filters:&HashMap<String,FilterInfo>){
         let Some(raw)=raw else{continue};
         let Some(id)=url_fragment(&raw) else{continue};
         let Some(filter)=filters.get(id) else{continue};
-        emit(out.as_mut(),indent,"filter-graph",&quote(&filter.graph));
-        emit(out.as_mut(),indent,"filter-units",&quote(&filter.units));
-        emit(out.as_mut(),indent,"filter-primitive-units",&quote(&filter.primitive_units));
-        emit(out.as_mut(),indent,"filter-x",&quote(&filter.x));
-        emit(out.as_mut(),indent,"filter-y",&quote(&filter.y));
-        emit(out.as_mut(),indent,"filter-width",&quote(&filter.width));
-        emit(out.as_mut(),indent,"filter-height",&quote(&filter.height));
+        emit(&mut out,indent,"filter-graph",&quote(&filter.graph));
+        emit(&mut out,indent,"filter-units",&quote(&filter.units));
+        emit(&mut out,indent,"filter-primitive-units",&quote(&filter.primitive_units));
+        emit(&mut out,indent,"filter-x",&quote(&filter.x));
+        emit(&mut out,indent,"filter-y",&quote(&filter.y));
+        emit(&mut out,indent,"filter-width",&quote(&filter.width));
+        emit(&mut out,indent,"filter-height",&quote(&filter.height));
     }
     *source=out;
 }
@@ -128,7 +128,7 @@ fn color_matrix_values(node:Node<'_, '_>)->[f64;20]{
 }
 fn hue_rotate(degrees:f64)->[f64;20]{let(a,b)=(degrees.to_radians().cos(),degrees.to_radians().sin());[0.213+0.787*a-0.213*b,0.715-0.715*a-0.715*b,0.072-0.072*a+0.928*b,0.0,0.0,0.213-0.213*a+0.143*b,0.715+0.285*a+0.140*b,0.072-0.072*a-0.283*b,0.0,0.0,0.213-0.213*a-0.787*b,0.715-0.715*a+0.715*b,0.072+0.928*a+0.072*b,0.0,0.0,0.0,0.0,0.0,1.0,0.0]}
 fn transfer_function(node:Node<'_, '_>)->String{match node.attribute("type").unwrap_or("identity"){"table"=>format!("table:{}",number_tokens(node.attribute("tableValues").unwrap_or("")).join("|")),"discrete"=>format!("discrete:{}",number_tokens(node.attribute("tableValues").unwrap_or("")).join("|")),"linear"=>format!("linear:{}|{}",node.attribute("slope").unwrap_or("1"),node.attribute("intercept").unwrap_or("0")),"gamma"=>format!("gamma:{}|{}|{}",node.attribute("amplitude").unwrap_or("1"),node.attribute("exponent").unwrap_or("1"),node.attribute("offset").unwrap_or("0")),_=>"identity".into()}}
-fn flood_color(node:Node<'_, '_>)->String{let mut color=node.attribute("flood-color").unwrap_or("#000000").to_string();let mut opacity=node.attribute("flood-opacity").and_then(parse_f64).unwrap_or(1.0);if let Some(style)=node.attribute("style"){for field in style.split(';'){if let Some((key,value))=field.split_once(':'){match key.trim(){"flood-color"=>color=value.trim().into(),"flood-opacity"=>opacity=parse_f64(value).unwrap_or(opacity),_=>{}}}}}let(mut r,mut g,mut b,mut a)=normalize_color(&color);a=((f64::from(a)*opacity.clamp(0.0,1.0)).round())as u8;format!("#{r:02x}{g:02x}{b:02x}{a:02x}")}
+fn flood_color(node:Node<'_, '_>)->String{let mut color=node.attribute("flood-color").unwrap_or("#000000").to_string();let mut opacity=node.attribute("flood-opacity").and_then(parse_f64).unwrap_or(1.0);if let Some(style)=node.attribute("style"){for field in style.split(';'){if let Some((key,value))=field.split_once(':'){match key.trim(){"flood-color"=>color=value.trim().into(),"flood-opacity"=>opacity=parse_f64(value).unwrap_or(opacity),_=>{}}}}}let(r,g,b,mut a)=normalize_color(&color);a=((f64::from(a)*opacity.clamp(0.0,1.0)).round())as u8;format!("#{r:02x}{g:02x}{b:02x}{a:02x}")}
 fn normalize_color(value:&str)->(u8,u8,u8,u8){let v=value.trim();if v.eq_ignore_ascii_case("transparent"){return(0,0,0,0)};for(name,c)in[("black",(0,0,0,255)),("white",(255,255,255,255)),("red",(255,0,0,255)),("green",(0,128,0,255)),("blue",(0,0,255,255))]{if v.eq_ignore_ascii_case(name){return c}}let Some(h)=v.strip_prefix('#')else{return(0,0,0,255)};let byte=|s:&str|u8::from_str_radix(s,16).unwrap_or(0);match h.len(){3=>(byte(&h[0..1].repeat(2)),byte(&h[1..2].repeat(2)),byte(&h[2..3].repeat(2)),255),4=>(byte(&h[0..1].repeat(2)),byte(&h[1..2].repeat(2)),byte(&h[2..3].repeat(2)),byte(&h[3..4].repeat(2))),6=>(byte(&h[0..2]),byte(&h[2..4]),byte(&h[4..6]),255),8=>(byte(&h[0..2]),byte(&h[2..4]),byte(&h[4..6]),byte(&h[6..8])),_=>(0,0,0,255)}}
 fn number_tokens(value:&str)->Vec<String>{value.split(|c:char|c==','||c.is_whitespace()).filter(|v|!v.is_empty()).map(str::to_string).collect()}
 fn parse_f64(value:&str)->Option<f64>{value.trim().parse().ok()}
