@@ -9,7 +9,7 @@ cargo run --bin srng-svg -- artwork.svg -o artwork.srng
 cargo run --bin srng-svg -- artwork.svg --native -o artwork-native.srng
 ```
 
-`--native` removes `svg-*` provenance after native SRNG properties/resources have been emitted. `--stdout` prints the result instead of writing it. `--strict` treats remaining warnings as a failing conversion, which is useful for fidelity-sensitive jobs.
+`--native` removes `svg-*` provenance after native SRNG properties/resources have been emitted. `--stdout` prints the result instead of writing it. `--strict` treats remaining warnings as a failing conversion.
 
 ## Rendering and Studio
 
@@ -20,73 +20,84 @@ cargo run --manifest-path studio/Cargo.toml
 
 The renderer derives its viewport from the first active SRNG canvas unless `--viewport WIDTHxHEIGHT` is supplied.
 
-## v0.4 supported mappings
+## v0.5 native mappings
 
-The importer/runtime/renderer stack currently covers:
+The importer/runtime/renderer stack now covers:
 
-- `<svg>` canvas geometry plus root `viewBox` and `preserveAspectRatio`
+- `<svg>` canvas geometry, root `viewBox`, and `preserveAspectRatio`
 - `<g>` / `<symbol>` hierarchy through explicit `contains` relations
 - `<rect>` including rounded corners, `<circle>`, `<ellipse>`, `<path>`, `<line>`, `<polyline>`, `<polygon>`
 - transform lists: `matrix`, `translate`, `scale`, `rotate`, `skewX`, `skewY`, including inherited group transforms
-- `opacity`, `fill-opacity`, and `stroke-opacity`, including inherited group opacity
+- `opacity`, `fill-opacity`, and `stroke-opacity`
 - fills/strokes, fill rules, line caps/joins, dash arrays/offsets, and common SVG lengths
-- native linear-gradient resources and radial-gradient rendering
-- `<clipPath>` vector geometry including `objectBoundingBox` handling for supported shapes
-- simple binary masks as clips and general vector alpha/luminance masks through isolated compositing
-- `maskContentUnits` coordinate conversion and retained mask region/unit metadata
-- repeating SVG patterns, object-bounding-box patterns, nested vector pattern content, and embedded data-image pattern content
-- standalone embedded `data:image/*` raster images
-- simple local `<use href="#id">` references to supported vector shapes
-- imported text position/content/font-family/font-size/font-weight/font-style/text-anchor with deterministic vector fallback geometry when outline path data is not present
+- native linear and radial gradients, including `gradientUnits`, `gradientTransform`, `spreadMethod`, focal point/radius, stop opacity, and href inheritance
+- `<clipPath>` geometry including `objectBoundingBox` handling for supported shapes
+- native vector masks through isolated alpha/luminance compositing
+- native repeating vector patterns using SRNG vector records, with legacy v0.4 pattern provenance readable only as backward compatibility
+- standalone embedded `data:image/png` and `data:image/svg+xml` images on the CPU renderer, including meet/slice/none aspect-ratio behavior
+- local `<use href="#id">` references to supported vector shapes, including nested aliases and cycle-safe local resolution
+- native `feGaussianBlur` and `feOffset` filter operations on the CPU renderer
+- imported text content and common font metadata, with deterministic vector fallback including anchors, size, weight, italic/oblique, letter spacing, word spacing, tabs, line height, and multiline layout
 
-The v0.4 renderer bakes viewBox and transform matrices into geometry before normal preparation so hand-authored SRNG and imported SRNG share the same render command model.
+## First-class resource semantics
 
-## Native resource semantics
-
-Supported pattern and mask resources do not require `svg-*` metadata. The importer emits SRNG-native fields such as:
+Supported features are lowered into normal SRNG fields and renderer command types rather than reconstructing source SVG in semantic passes. Important native fields include:
 
 - `pattern-ref`, `pattern-width`, `pattern-height`, `pattern-data`
 - `mask-ref`, `mask-data`, `mask-type`, mask unit/region metadata
 - `clip`
-- `gradient-kind`, `gradient-units`, gradient coordinates/stops
-- `transform`, opacity fields
+- `gradient-kind`, `gradient-units`, `gradient-transform`, `gradient-spread`, gradient coordinates, focal radius, and stops
+- `image-data`, image placement, and `image-preserve-aspect-ratio`
+- `filter-chain`
 - `href`, `use-data`, `use-fill`, `use-stroke`
-- text/font fields
+- text/font/spacing fields
 
-For features currently implemented through a compatibility raster step (for example radial gradients or embedded raster images), any temporary SVG fragment is reconstructed in memory from SRNG-native properties. It is not required as source-of-truth data in native SRNG files. The text fallback is generated directly as SRNG vector path geometry and therefore does not depend on a host font installation.
-
-`--native` output is regression-tested after all `svg-*` provenance is stripped.
+`svg-*` properties are provenance. `--native` output removes them. The v0.5 verification script rejects semantic code that reintroduces temporary `<gradient>`, `<text>`, `<image>`, `<mask>`, `<pattern>`, or `<filter>` reconstruction for supported native features.
 
 ## Masks and clipping
 
-Supported clip shapes become SRNG path geometry. `clipPathUnits="objectBoundingBox"` is resolved against the receiving node before rendering.
+Supported clip shapes become SRNG path geometry. `clipPathUnits="objectBoundingBox"` is resolved against the receiving node before rendering. Vector masks use native `paint|path` records and isolated compositing. Luminance masks convert RGB luminance to alpha before compositing.
 
-Simple opaque-white masks may be reduced to vector clips. General vector masks are rendered into an isolated layer. Luminance masks convert RGB luminance to alpha before the existing alpha compositor is applied, so gray mask values produce partial transparency rather than behaving as fully opaque alpha masks.
+Legacy masks that exist only as preserved v0.4 SVG provenance are diagnosed rather than silently executed through hidden SVG reconstruction.
 
 ## Patterns
 
-Simple vector pattern children are encoded as native vector resource records. More complex nested pattern content can retain a compatibility resource when required, and the CPU renderer rasterizes the tile locally with repeat sampling. `patternUnits="userSpaceOnUse"` and object-bounding-box tile sizing are distinguished.
+Supported vector pattern children are native vector records and repeat through the renderer's image sampling path. `patternUnits="userSpaceOnUse"` and object-bounding-box tile sizing are distinct. Complex legacy v0.4 patterns may still use the explicitly marked compatibility reader; new native output does not require it.
 
-## Text
+## Text and fonts
 
-Text remains a native SRNG declaration with content, position, and common font properties. When outline `data` is available, the renderer uses the normal vector path. Otherwise v0.4 generates a deterministic built-in vector fallback for Latin letters, digits, common punctuation, and a visible fallback glyph for unsupported characters. This makes basic text rendering independent of the operating system's installed fonts. It is not a production-grade shaping engine: exact authored typefaces, ligatures, complex-script shaping, kerning, and full Unicode typography require a later dedicated text subsystem.
+Text remains semantic SRNG content. Pre-shaped outline `data` is rendered exactly as normal vector geometry. When outlines are absent, v0.5 uses a deterministic built-in vector fallback for Latin letters, digits, common punctuation, and a visible unsupported-character glyph.
+
+The fallback handles common layout metadata but is not a production font shaper. Exact authored fonts, OpenType shaping, kerning, ligatures, bidi layout, variable fonts, and full complex-script Unicode typography require a dedicated text subsystem.
 
 ## Images and `<use>`
 
-Embedded `data:image/*` image content can render as a standalone image through the local renderer path. Network resources are never fetched. Simple `<use>` references to supported local vector shapes are expanded to native geometry and preserve the referenced fill/stroke. More complex symbol/use inheritance remains diagnostic-first rather than silently approximated.
+Embedded PNG and SVG data images render through native image commands on the CPU renderer. Network resources are never fetched. Unsupported image codecs produce diagnostics.
+
+Local `<use>` references to supported vector shapes are expanded into native geometry. Nested local aliases are resolved recursively with cycle protection. Multi-style group/symbol expansion remains diagnostic-first because flattening those into one paint would be incorrect.
+
+## Filters
+
+`feGaussianBlur` and `feOffset` are represented as typed native filter operations and execute in isolated CPU layers. Unsupported primitives remain warnings/errors rather than being approximated silently. Full SVG filter result graphs, morphology, turbulence, displacement, lighting, component transfer, complex blend/composite routing, and other graph-scale semantics remain future filter-engine work.
+
+## CPU/GPU behavior
+
+CPU is the v0.5 reference backend for masks, patterns, embedded images, and filters. GPU directly supports vector paths plus solid, linear, and radial gradient paints including focal radius and spread modes. Texture-upload/offscreen operations currently emit explicit GPU diagnostics rather than incorrect approximations.
 
 ## Fault tolerance and remaining boundaries
 
-Conversion is diagnostic-first. Unsupported SVG semantics are preserved when possible and reported rather than silently discarded.
+Conversion is diagnostic-first. Unsupported SVG semantics are preserved when possible and reported rather than discarded.
 
-The major remaining boundaries after the v0.4 fidelity milestone are intentionally larger subsystems rather than missing basic scene-graph features:
+Remaining boundaries are subsystem-scale:
 
-- broad SVG filter graphs (`feGaussianBlur`, morphology, turbulence, lighting, complex filter composition, and similar primitives)
-- production-grade font discovery/shaping/outlining for exact authored fonts and full complex-script typography
-- arbitrary external/network resource loading (intentionally disabled by the security model)
-- highly advanced SVG paint-server inheritance/compositing combinations outside the tested v0.4 resource model
+- production-grade font discovery/shaping/outlining across fonts and scripts
+- the complete SVG filter graph and intermediate-result model
+- GPU texture/offscreen parity for masks, patterns, images, and filters
+- additional embedded raster codecs beyond PNG
+- arbitrary external/network resource loading, intentionally disabled by the security model
+- the most advanced SVG compositing and paint-server combinations outside the tested native resource model
 
-These boundaries do not prevent ordinary SRNG vector scenes from compiling/rendering; unsupported portions continue to produce diagnostics while unaffected content renders.
+These boundaries do not prevent unaffected SRNG content from compiling and rendering.
 
 ## IDs, hierarchy, and security
 
@@ -99,7 +110,7 @@ The importer parses supplied XML locally. It does not fetch network resources, e
 ```text
 SVG
   -> srng-svg importer
-  -> SRNG source
+  -> native SRNG source/resources
   -> compiler / SRNG-IR
   -> runtime / SRNG-SCENE
   -> semantic normalization
