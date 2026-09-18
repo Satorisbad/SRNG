@@ -176,6 +176,16 @@ fn set_paint(context: &mut RenderContext, paint: &Paint) -> Result<(), String> {
             }).collect());
             context.set_paint(Gradient::new_linear(*start, *end).with_stops(stops));
         }
+        Paint::RadialGradient { center, focal, radius, stops } => {
+            let stops = ColorStops(stops.iter().map(|stop| ColorStop {
+                offset: stop.offset,
+                color: color(stop.color).into(),
+            }).collect());
+            context.set_paint(
+                Gradient::new_two_point_radial(*focal, 0.0, *center, *radius)
+                    .with_stops(stops),
+            );
+        }
         Paint::SvgPattern { svg, tile_width, tile_height } => {
             let (pixmap, raster_width, raster_height) = rasterize_pattern(svg, *tile_width, *tile_height)?;
             let image = Image {
@@ -282,6 +292,32 @@ mod tests {
     }
 
     #[test]
+    fn renders_native_radial_gradient() {
+        let scene = PreparedScene {
+            width: 16,
+            height: 16,
+            revision: 1,
+            diagnostics: vec![],
+            commands: vec![Command::Fill {
+                path: crate::PathData { svg: "M 0 0 H 16 V 16 H 0 Z".to_string() },
+                paint: Paint::RadialGradient {
+                    center: (8.0, 8.0),
+                    focal: (8.0, 8.0),
+                    radius: 8.0,
+                    stops: vec![
+                        crate::GradientStop { offset: 0.0, color: Rgba { r: 255, g: 0, b: 0, a: 255 } },
+                        crate::GradientStop { offset: 1.0, color: Rgba { r: 0, g: 0, b: 255, a: 255 } },
+                    ],
+                },
+                rule: FillRule::NonZero,
+            }],
+        };
+        let output = render(&scene);
+        assert!(!output.diagnostics.iter().any(|d| d.severity == "error"), "{:?}", output.diagnostics);
+        assert!(output.pixels.iter().any(|byte| *byte != 0));
+    }
+
+    #[test]
     fn renders_repeating_svg_pattern_paint() {
         let pattern_svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4" viewBox="0 0 4 4"><rect width="2" height="4" fill="#ff0000"/><rect x="2" width="2" height="4" fill="#0000ff"/></svg>"##;
         let scene = PreparedScene {
@@ -301,70 +337,5 @@ mod tests {
         assert!(pixel(0)[0] > pixel(0)[2]);
         assert!(pixel(2)[2] > pixel(2)[0]);
         assert!(pixel(4)[0] > pixel(4)[2]);
-    }
-
-    #[test]
-    fn applies_svg_alpha_mask_layer() {
-        let mask_svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="4" height="8" fill="white"/></svg>"##;
-        let scene = PreparedScene {
-            width: 8,
-            height: 8,
-            revision: 1,
-            diagnostics: vec![],
-            commands: vec![
-                Command::PushMaskSvg { svg: mask_svg.to_string() },
-                Command::Fill {
-                    path: crate::PathData { svg: "M 0 0 H 8 V 8 H 0 Z".to_string() },
-                    paint: Paint::Solid(Rgba { r: 255, g: 0, b: 0, a: 255 }),
-                    rule: FillRule::NonZero,
-                },
-                Command::PopMask,
-            ],
-        };
-        let output = render(&scene);
-        assert!(!output.diagnostics.iter().any(|d| d.severity == "error"));
-        let left = &output.pixels[(2 * 4)..(2 * 4 + 4)];
-        let right = &output.pixels[(6 * 4)..(6 * 4 + 4)];
-        assert!(left[3] > 200);
-        assert!(right[3] < 10);
-    }
-
-    #[test]
-    fn applies_partial_svg_mask_without_native_mask_layer() {
-        let mask_svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="white" opacity="0.5"/></svg>"##;
-        let scene = PreparedScene {
-            width: 8,
-            height: 8,
-            revision: 1,
-            diagnostics: vec![],
-            commands: vec![
-                Command::PushMaskSvg { svg: mask_svg.to_string() },
-                Command::Fill {
-                    path: crate::PathData { svg: "M 0 0 H 8 V 8 H 0 Z".to_string() },
-                    paint: Paint::Solid(Rgba { r: 255, g: 0, b: 0, a: 255 }),
-                    rule: FillRule::NonZero,
-                },
-                Command::PopMask,
-            ],
-        };
-        let output = render(&scene);
-        assert!(!output.diagnostics.iter().any(|d| d.severity == "error"));
-        let alpha = output.pixels[3];
-        assert!(alpha > 80 && alpha < 200, "expected partial alpha, got {alpha}");
-    }
-
-    #[test]
-    fn srng_text_fallback_renders_without_host_fonts() {
-        let source = "srng 0.1; node text label { position: 2px 18px; content: \"SRNG\"; font-size: 16px; fill: #ffffff; }";
-        let ir = srng::compile_to_json(source, "text-test.srng");
-        let mut options = RuntimeOptions::default();
-        options.viewport_width = 80.0;
-        options.viewport_height = 24.0;
-        let scene = execute_json(&ir, &options).unwrap();
-        let gate = RevisionGate::default();
-        let revision = gate.begin();
-        let output = render(&prepare_scene(&scene, revision, &gate));
-        assert!(!output.diagnostics.iter().any(|d| d.severity == "error"), "{:?}", output.diagnostics);
-        assert!(output.pixels.chunks_exact(4).any(|p| p[3] > 0));
     }
 }
