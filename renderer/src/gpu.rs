@@ -14,14 +14,22 @@ impl std::error::Error for GpuRenderError {}
 #[derive(Debug)]
 pub struct GpuTexture { _texture: Texture, view: TextureView, width:u32, height:u32 }
 impl GpuTexture {
+    pub fn new_offscreen(device:&Device,label:&str,width:u32,height:u32)->Result<Self,String>{
+        let width=width.max(1); let height=height.max(1);
+        let texture=device.create_texture(&TextureDescriptor{label:Some(label),size:Extent3d{width,height,depth_or_array_layers:1},mip_level_count:1,sample_count:1,dimension:TextureDimension::D2,format:TextureFormat::Rgba8Unorm,usage:TextureUsages::TEXTURE_BINDING|TextureUsages::COPY_DST|TextureUsages::RENDER_ATTACHMENT,view_formats:&[]});
+        let view=texture.create_view(&TextureViewDescriptor::default()); Ok(Self{_texture:texture,view,width,height})
+    }
     fn new_rgba8(device:&Device, queue:&Queue, label:&str, width:u32, height:u32, pixels:&[u8])->Result<Self,String> {
         let width=width.max(1); let height=height.max(1); let expected=(width as usize).checked_mul(height as usize).and_then(|n|n.checked_mul(4)).ok_or_else(||"texture dimensions overflow".to_string())?;
         if pixels.len()!=expected { return Err(format!("texture `{label}` has {} bytes, expected {expected}",pixels.len())); }
-        let texture=device.create_texture(&TextureDescriptor{label:Some(label),size:Extent3d{width,height,depth_or_array_layers:1},mip_level_count:1,sample_count:1,dimension:TextureDimension::D2,format:TextureFormat::Rgba8Unorm,usage:TextureUsages::TEXTURE_BINDING|TextureUsages::COPY_DST|TextureUsages::RENDER_ATTACHMENT,view_formats:&[]});
-        queue.write_texture(TexelCopyTextureInfo{texture:&texture,mip_level:0,origin:Origin3d::ZERO,aspect:TextureAspect::All},pixels,TexelCopyBufferLayout{offset:0,bytes_per_row:Some(width*4),rows_per_image:Some(height)},Extent3d{width,height,depth_or_array_layers:1});
-        let view=texture.create_view(&TextureViewDescriptor::default()); Ok(Self{_texture:texture,view,width,height})
+        let texture=Self::new_offscreen(device,label,width,height)?;
+        queue.write_texture(TexelCopyTextureInfo{texture:&texture._texture,mip_level:0,origin:Origin3d::ZERO,aspect:TextureAspect::All},pixels,TexelCopyBufferLayout{offset:0,bytes_per_row:Some(width*4),rows_per_image:Some(height)},Extent3d{width,height,depth_or_array_layers:1});
+        Ok(texture)
     }
-    fn view(&self)->TextureView { self.view.clone() }
+    pub fn view(&self)->&TextureView { &self.view }
+    pub fn width(&self)->u32 { self.width }
+    pub fn height(&self)->u32 { self.height }
+    fn binding_view(&self)->TextureView { self.view.clone() }
 }
 
 #[derive(Clone,Copy,Debug)]
@@ -31,7 +39,7 @@ struct TextureHandle { id:TextureId, width:u16, height:u16 }
 pub struct GpuResourceStore { next_texture_id:u64, textures:HashMap<TextureId,GpuTexture> }
 impl GpuResourceStore {
     fn insert(&mut self, texture:GpuTexture)->Result<TextureHandle,String> { let width=u16::try_from(texture.width).map_err(|_|"GPU texture width exceeds vello_hybrid u16 limits".to_string())?; let height=u16::try_from(texture.height).map_err(|_|"GPU texture height exceeds vello_hybrid u16 limits".to_string())?; let id=TextureId(self.next_texture_id); self.next_texture_id=self.next_texture_id.wrapping_add(1); self.textures.insert(id,texture); Ok(TextureHandle{id,width,height}) }
-    fn bindings(&self)->TextureBindings { let mut bindings=TextureBindings::new(); for (id,texture) in &self.textures { bindings.insert(*id,texture.view()); } bindings }
+    fn bindings(&self)->TextureBindings { let mut bindings=TextureBindings::new(); for (id,texture) in &self.textures { bindings.insert(*id,texture.binding_view()); } bindings }
     pub fn clear(&mut self){ self.textures.clear(); }
     pub fn len(&self)->usize{ self.textures.len() }
 }
@@ -81,12 +89,20 @@ fn render_masked_block(context:&mut HybridScene,commands:&[Command],records:&[Ve
     let handle=resources.insert(GpuTexture::new_rgba8(device,queue,"srng-mask-layer",u32::from(width),u32::from(height),&composited)?)?; draw_texture_fullscreen(context,handle); diagnostics.push(RenderDiagnostic{severity:"info".into(),code:"G611".into(),message:"GPU mask compositing used a deterministic isolated-layer upload; no masked command was dropped".into(),declaration:None}); Ok(())
 }
 
-fn apply_gpu(context:&mut HybridScene,command:&Command,device:&Device,queue:&Queue,resources:&mut GpuResourceStore,_width:u16,_height:u16)->Result<(),String>{ match command {
+fn apply_gpu(context:&mut HybridScene,command:&Command,device:&Device,queue:&Queue,resources:&mut GpuResourceStore,width:u16,height:u16)->Result<(),String>{ match command {
     Command::PushClip{path,rule}=>{context.set_fill_rule(to_fill(*rule));context.push_clip_path(&parse_path(&path.svg)?);}, Command::PopClip=>context.pop_clip_path(),
     Command::PushMask{..}|Command::PopMask|Command::PushFilter{..}|Command::PopFilter=>return Err("layer commands must be handled as blocks".into()),
     Command::DrawImage{image}=>draw_image(context,image,device,queue,resources)?,
     Command::Fill{path,paint,rule}=>{context.set_fill_rule(to_fill(*rule)); if let Some(texture)=texture_paint(paint,device,queue,resources)?{fill_path_with_texture(context,&parse_path(&path.svg)?,texture);}else{set_vector_paint(context,paint)?;context.fill_path(&parse_path(&path.svg)?);}},
-    Command::Stroke{path,paint,style}=>{ if texture_paint(paint,device,queue,resources)?.is_some(){return Err("GPU texture-backed pattern strokes are not representable by vello_hybrid external-texture rects; CPU fallback required for this stroke".into());} set_vector_paint(context,paint)?; let stroke=KurboStroke::new(style.width).with_miter_limit(style.miter_limit).with_caps(cap(style.line_cap)).with_join(join(style.line_join)).with_dashes(style.dash_offset,style.dash.iter()); context.set_stroke(stroke); context.stroke_path(&parse_path(&path.svg)?); }
+    Command::Stroke{path,paint,style}=>{
+        if matches!(paint,Paint::Pattern{..}|Paint::SvgPattern{..}) {
+            let pixels=render_cpu_rgba(std::slice::from_ref(command),width,height)?;
+            let handle=resources.insert(GpuTexture::new_rgba8(device,queue,"srng-pattern-stroke-fallback",u32::from(width),u32::from(height),&pixels)?)?;
+            draw_texture_fullscreen(context,handle);
+        } else {
+            set_vector_paint(context,paint)?; let stroke=KurboStroke::new(style.width).with_miter_limit(style.miter_limit).with_caps(cap(style.line_cap)).with_join(join(style.line_join)).with_dashes(style.dash_offset,style.dash.iter()); context.set_stroke(stroke); context.stroke_path(&parse_path(&path.svg)?);
+        }
+    }
     } Ok(()) }
 
 fn apply_vector_only(context:&mut HybridScene,command:&Command)->Result<(),String>{match command{
@@ -120,8 +136,9 @@ fn render_mask_rgba(records:&[VectorRecord],width:u16,height:u16)->Result<Vec<u8
 fn rasterize_pattern_records(records:&[VectorRecord],tile_width:f64,tile_height:f64)->Result<(Vec<u8>,u32,u32),String>{if !tile_width.is_finite()||!tile_height.is_finite()||tile_width<=0.0||tile_height<=0.0{return Err("native pattern tile dimensions must be positive finite numbers".into());}let width=tile_width.ceil().clamp(1.0,512.0)as u16;let height=tile_height.ceil().clamp(1.0,512.0)as u16;let mut commands=Vec::new();for record in records{commands.push(Command::Fill{path:record.path.clone(),paint:record.paint.clone(),rule:FillRule::NonZero});}let pixels=render_cpu_rgba(&commands,width,height)?;Ok((pixels,u32::from(width),u32::from(height)))}
 
 fn rasterize_svg(svg:&str,tile_width:f64,tile_height:f64)->Result<(Vec<u8>,u32,u32),String>{use resvg::{tiny_skia,usvg};let options=usvg::Options::default();let tree=usvg::Tree::from_str(svg,&options).map_err(|e|format!("invalid SVG pattern: {e}"))?;let width=tile_width.ceil().clamp(1.0,4096.0)as u32;let height=tile_height.ceil().clamp(1.0,4096.0)as u32;let mut pixmap=tiny_skia::Pixmap::new(width,height).ok_or_else(||"could not allocate SVG pattern pixmap".to_string())?;let size=tree.size();resvg::render(&tree,tiny_skia::Transform::from_scale(width as f32/size.width(),height as f32/size.height()),&mut pixmap.as_mut());Ok((pixmap.data().to_vec(),width,height))}
+fn rasterize_svg_image(svg:&str)->Result<(Vec<u8>,u32,u32),String>{use resvg::{tiny_skia,usvg};let options=usvg::Options::default();let tree=usvg::Tree::from_str(svg,&options).map_err(|e|format!("invalid embedded SVG: {e}"))?;let size=tree.size();let width=size.width().ceil().clamp(1.0,4096.0)as u32;let height=size.height().ceil().clamp(1.0,4096.0)as u32;let mut pixmap=tiny_skia::Pixmap::new(width,height).ok_or_else(||"could not allocate embedded SVG pixmap".to_string())?;resvg::render(&tree,tiny_skia::Transform::from_scale(width as f32/size.width(),height as f32/size.height()),&mut pixmap.as_mut());Ok((pixmap.data().to_vec(),width,height))}
 
-fn decode_data_image(uri:&str)->Result<(Vec<u8>,u32,u32),String>{let(rest,payload)=uri.split_once(',').ok_or_else(||"invalid data image URI".to_string())?;let mime=rest.strip_prefix("data:").unwrap_or(rest).split(';').next().unwrap_or("");let bytes=if rest.contains(";base64"){decode_base64(payload)?}else{percent_decode(payload)?};match mime{"image/png"=>decode_png(&bytes),"image/svg+xml"=>{let text=std::str::from_utf8(&bytes).map_err(|_|"embedded SVG is not UTF-8".to_string())?;rasterize_svg(text,256.0,256.0)},other=>Err(format!("unsupported embedded image type `{other}`; GPU backend supports PNG and SVG data images"))}}
+fn decode_data_image(uri:&str)->Result<(Vec<u8>,u32,u32),String>{let(rest,payload)=uri.split_once(',').ok_or_else(||"invalid data image URI".to_string())?;let mime=rest.strip_prefix("data:").unwrap_or(rest).split(';').next().unwrap_or("");let bytes=if rest.contains(";base64"){decode_base64(payload)?}else{percent_decode(payload)?};match mime{"image/png"=>decode_png(&bytes),"image/svg+xml"=>{let text=std::str::from_utf8(&bytes).map_err(|_|"embedded SVG is not UTF-8".to_string())?;rasterize_svg_image(text)},other=>Err(format!("unsupported embedded image type `{other}`; GPU backend supports PNG and SVG data images"))}}
 fn decode_png(bytes:&[u8])->Result<(Vec<u8>,u32,u32),String>{let decoder=png::Decoder::new(Cursor::new(bytes));let mut reader=decoder.read_info().map_err(|e|format!("invalid embedded PNG: {e}"))?;let mut buf=vec![0;reader.output_buffer_size()];let info=reader.next_frame(&mut buf).map_err(|e|format!("could not decode embedded PNG: {e}"))?;let src=&buf[..info.buffer_size()];let mut out=vec![0;(info.width as usize)*(info.height as usize)*4];match info.color_type{png::ColorType::Rgba=>out.copy_from_slice(src),png::ColorType::Rgb=>for(dst,s)in out.chunks_exact_mut(4).zip(src.chunks_exact(3)){dst[0]=s[0];dst[1]=s[1];dst[2]=s[2];dst[3]=255;},png::ColorType::Grayscale=>for(dst,&v)in out.chunks_exact_mut(4).zip(src){dst[0]=v;dst[1]=v;dst[2]=v;dst[3]=255;},png::ColorType::GrayscaleAlpha=>for(dst,s)in out.chunks_exact_mut(4).zip(src.chunks_exact(2)){dst[0]=s[0];dst[1]=s[0];dst[2]=s[0];dst[3]=s[1];},png::ColorType::Indexed=>return Err("indexed embedded PNG must be expanded by decoder".into())}premultiply_rgba(&mut out);Ok((out,info.width,info.height))}
 fn premultiply_rgba(pixels:&mut[u8]){for p in pixels.chunks_exact_mut(4){let a=u16::from(p[3]);p[0]=((u16::from(p[0])*a+127)/255)as u8;p[1]=((u16::from(p[1])*a+127)/255)as u8;p[2]=((u16::from(p[2])*a+127)/255)as u8;}}
 fn decode_base64(input:&str)->Result<Vec<u8>,String>{let mut out=Vec::with_capacity(input.len()*3/4);let mut acc=0u32;let mut bits=0u8;for b in input.bytes().filter(|b|!b.is_ascii_whitespace()){if b==b'='{break;}let v=match b{b'A'..=b'Z'=>b-b'A',b'a'..=b'z'=>b-b'a'+26,b'0'..=b'9'=>b-b'0'+52,b'+'=>62,b'/'=>63,_=>return Err("invalid base64 in image URI".into())};acc=(acc<<6)|u32::from(v);bits+=6;if bits>=8{bits-=8;out.push(((acc>>bits)&0xff)as u8);}}Ok(out)}
@@ -143,4 +160,5 @@ mod tests{
     use super::*;
     #[test] fn premultiplies_external_texture_alpha(){let mut p=vec![200,100,50,128];premultiply_rgba(&mut p);assert_eq!(p,vec![100,50,25,128]);}
     #[test] fn preserves_image_meet_alignment(){assert_eq!(fit_image(0.0,0.0,100.0,100.0,200.0,100.0,"xMidYMid meet"),(0.0,25.0,100.0,50.0));}
+    #[test] fn embedded_svg_keeps_intrinsic_dimensions(){let(_,w,h)=rasterize_svg_image("<svg xmlns='http://www.w3.org/2000/svg' width='12' height='7'><rect width='12' height='7'/></svg>").unwrap();assert_eq!((w,h),(12,7));}
 }
