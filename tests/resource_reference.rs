@@ -48,12 +48,12 @@ fn nested_use_is_cycle_safe_and_resolves_shape() {
 
 #[test]
 fn direct_reference_cycle_is_diagnostic_not_scene_abort() {
-    let source = r#"
+    let source = r##"
 srng 0.1;
 reference a = "#b" { position: 0px 0px; }
 reference b = "#a" { position: 0px 0px; }
 rect valid { position: 1px 2px; size: 3px 4px; fill: #fff; }
-"#;
+"##;
     let ir = srng::compile_to_json(source, "cycle.srng");
     let scene = execute_json(&ir, &RuntimeOptions::default()).unwrap();
     assert!(scene.diagnostics.iter().any(|diagnostic| diagnostic.code == "R234"));
@@ -62,11 +62,11 @@ rect valid { position: 1px 2px; size: 3px 4px; fill: #fff; }
 
 #[test]
 fn broken_reference_does_not_disable_siblings() {
-    let source = r#"
+    let source = r##"
 srng 0.1;
 reference missing = "#does_not_exist" { position: 0px 0px; }
 rect valid { position: 5px 6px; size: 7px 8px; fill: #fff; }
-"#;
+"##;
     let ir = srng::compile_to_json(source, "broken.srng");
     let scene = execute_json(&ir, &RuntimeOptions::default()).unwrap();
     assert!(scene.diagnostics.iter().any(|diagnostic| diagnostic.code == "R231"));
