@@ -23,9 +23,14 @@ grep -q 'filter-graph' src/svg_filter_v06.rs
 grep -q 'filter-units' src/svg_filter_v06.rs
 grep -q 'filter-primitive-units' src/svg_filter_v06.rs
 
-# Filter-specific code must not reconstruct SVG XML.
-if grep -R --line-number -E '<filter|<fe[A-Z]' renderer/src/filter.rs renderer/src/filter_cpu.rs src/svg_filter_v06.rs; then
-  echo 'error: SVG XML reconstruction found in v0.6 filter-specific code' >&2
+# Renderer-side filter code must never reconstruct SVG XML. The importer is allowed
+# to parse SVG input/tests, but must not synthesize filter/primitive XML strings.
+if grep -R --line-number -E '<filter|<fe[A-Z]' renderer/src/filter.rs renderer/src/filter_cpu.rs; then
+  echo 'error: SVG XML reconstruction found in native renderer filter code' >&2
+  exit 1
+fi
+if grep -n -E 'format!\([^\n]*<filter|format!\([^\n]*<fe[A-Z]|push_str\([^\n]*<filter|push_str\([^\n]*<fe[A-Z]' src/svg_filter_v06.rs; then
+  echo 'error: SVG filter XML reconstruction found in importer implementation' >&2
   exit 1
 fi
 
