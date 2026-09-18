@@ -220,6 +220,7 @@ fn build_reference(
         geometry,
         linked_geometry: None,
         linked_properties: BTreeMap::new(),
+        resolved_nodes: Vec::new(),
         paint_order,
     })
 }
@@ -358,7 +359,7 @@ fn resolve_length(
                 .get(custom)
                 .ok_or_else(|| format!("unknown unit `{custom}`"))?;
             let base = resolve_length(
-                definition.scale,
+                1.0,
                 &definition.base,
                 horizontal,
                 units,
@@ -366,13 +367,13 @@ fn resolve_length(
                 visiting,
             )?;
             visiting.remove(custom);
-            base
+            definition.scale * base
         }
     };
-    let result = value * factor;
-    if result.is_finite() {
-        Ok(result)
+    let resolved = value * factor;
+    if resolved.is_finite() {
+        Ok(resolved)
     } else {
-        Err(format!("length `{value}{unit}` is not finite"))
+        Err(format!("non-finite length `{value}{unit}`"))
     }
 }
