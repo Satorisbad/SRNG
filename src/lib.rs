@@ -7,6 +7,8 @@ pub mod parser;
 mod svg_import_impl;
 #[path = "svg.rs"]
 mod svg_base;
+#[path = "resource_reference.rs"]
+mod resource_reference;
 #[path = "svg_v4.rs"]
 mod svg_v4;
 #[path = "svg_final.rs"]
