@@ -1,16 +1,10 @@
 use crate::{PreparedScene, RevisionGate};
-use srng::runtime::{Geometry, Scene, SceneNode};
-use std::collections::BTreeMap;
+use srng::runtime::Scene;
 
-/// Normalizes radial-gradient resources before the transform/opacity passes.
-/// The v4 layer already represents them natively; this pass only builds the
-/// temporary local compatibility resource consumed by the current pattern
-/// rasterizer. SRNG remains the source of truth.
+/// Normalizes radial-gradient SRNG properties into renderer-facing native
+/// radial-gradient paint properties. No SVG XML is reconstructed here.
 pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> PreparedScene {
     let mut normalized = scene.clone();
-    let vw = normalized.viewport.width;
-    let vh = normalized.viewport.height;
-    let mut resources = Vec::new();
 
     for node in &mut normalized.nodes {
         if node
@@ -44,6 +38,7 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
                 extent,
             )
         };
+
         let cx = coord("gradient-cx", x, w, "50%");
         let cy = coord("gradient-cy", y, h, "50%");
         let fx = coord("gradient-fx", x, w, "50%");
@@ -53,73 +48,15 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
             .get("gradient-r")
             .map(|v| unquote(v))
             .unwrap_or_else(|| "50%".into());
-        let r = if let Some(percent) = raw_r
-            .trim()
-            .strip_suffix('%')
-            .and_then(|v| v.parse::<f64>().ok())
-        {
-            if units == "objectBoundingBox" {
-                w.max(h) * percent / 100.0
-            } else {
-                percent / 100.0
-            }
-        } else {
-            raw_r.trim_end_matches("px").parse().unwrap_or(0.5)
-        };
+        let r = resolve_radius(&raw_r, &units, w, h);
 
-        let stops = svg_stops(
-            node.properties
-                .get("gradient-stops")
-                .map(String::as_str)
-                .unwrap_or(""),
-        );
-        let id = format!("__radial_{}", safe_id(&node.id));
-        let gradient_id = format!("{id}_gradient");
-        let gradient = format!(
-            "<radialGradient id=\"{gradient_id}\" gradientUnits=\"userSpaceOnUse\" cx=\"{cx}\" cy=\"{cy}\" r=\"{r}\" fx=\"{fx}\" fy=\"{fy}\">{stops}</radialGradient>"
-        );
-        let pattern = format!(
-            "<pattern id=\"{id}\" patternUnits=\"userSpaceOnUse\" width=\"{vw}\" height=\"{vh}\"><rect x=\"0\" y=\"0\" width=\"{vw}\" height=\"{vh}\" fill=\"url(#{gradient_id})\"/></pattern>"
-        );
-        let standalone = format!(
-            "<pattern id=\"{id}\" patternUnits=\"userSpaceOnUse\" width=\"{vw}\" height=\"{vh}\"><defs>{gradient}</defs><rect x=\"0\" y=\"0\" width=\"{vw}\" height=\"{vh}\" fill=\"url(#{gradient_id})\"/></pattern>"
-        );
-
-        node.properties.insert("pattern-ref".into(), quote(&id));
-        node.properties
-            .insert("pattern-width".into(), format!("{vw}px"));
-        node.properties
-            .insert("pattern-height".into(), format!("{vh}px"));
-        node.properties
-            .insert("pattern-source".into(), quote(&standalone));
-        node.properties.remove("gradient-kind");
-
-        resources.push(format!("{gradient}{pattern}"));
-    }
-
-    if !resources.is_empty() {
-        let mut properties = BTreeMap::new();
-        properties.insert("fill".into(), "none".into());
-        properties.insert("stroke".into(), "none".into());
-        properties.insert("svg-source-tag".into(), quote("defs"));
-        properties.insert(
-            "svg-source-xml".into(),
-            quote(&format!("<defs>{}</defs>", resources.join(""))),
-        );
-        normalized.nodes.push(SceneNode {
-            id: "__srng_radial_resources".into(),
-            kind: "group".into(),
-            source: normalized.source.clone(),
-            properties,
-            geometry: Geometry {
-                x: Some(0.0),
-                y: Some(0.0),
-                width: Some(0.0),
-                height: Some(0.0),
-            },
-            paint_order: usize::MAX - 1,
-            active: true,
-        });
+        node.properties.insert("fill".into(), "radial-gradient".into());
+        node.properties.insert("gradient-cx".into(), format_number(cx));
+        node.properties.insert("gradient-cy".into(), format_number(cy));
+        node.properties.insert("gradient-fx".into(), format_number(fx));
+        node.properties.insert("gradient-fy".into(), format_number(fy));
+        node.properties.insert("gradient-r".into(), format_number(r));
+        node.properties.insert("gradient-units".into(), "userSpaceOnUse".into());
     }
 
     crate::semantic_v5::prepare_scene(&normalized, revision, gate)
@@ -127,10 +64,7 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
 
 fn resolve_coord(raw: &str, units: &str, origin: f64, extent: f64) -> f64 {
     let raw = raw.trim();
-    if let Some(percent) = raw
-        .strip_suffix('%')
-        .and_then(|v| v.parse::<f64>().ok())
-    {
+    if let Some(percent) = raw.strip_suffix('%').and_then(|v| v.parse::<f64>().ok()) {
         return if units == "objectBoundingBox" {
             origin + extent * percent / 100.0
         } else {
@@ -145,43 +79,26 @@ fn resolve_coord(raw: &str, units: &str, origin: f64, extent: f64) -> f64 {
     }
 }
 
-fn svg_stops(value: &str) -> String {
-    unquote(value)
-        .split(',')
-        .filter_map(|record| {
-            let fields = record.split_whitespace().collect::<Vec<_>>();
-            if fields.len() < 2 {
-                return None;
-            }
-            Some(format!(
-                "<stop offset=\"{}\" stop-color=\"{}\"/>",
-                escape(fields[0]),
-                escape(fields[1])
-            ))
-        })
-        .collect::<Vec<_>>()
-        .join("")
-}
-
-fn safe_id(value: &str) -> String {
-    value
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
+fn resolve_radius(raw: &str, units: &str, width: f64, height: f64) -> f64 {
+    let raw = raw.trim();
+    if let Some(percent) = raw.strip_suffix('%').and_then(|v| v.parse::<f64>().ok()) {
+        return if units == "objectBoundingBox" {
+            width.max(height) * percent / 100.0
+        } else {
+            percent / 100.0
+        };
+    }
+    let value = raw.trim_end_matches("px").parse::<f64>().unwrap_or(0.5);
+    if units == "objectBoundingBox" {
+        width.max(height) * value
+    } else {
+        value
+    }
 }
 
 fn unquote(value: &str) -> String {
     let value = value.trim();
-    let Some(inner) = value
-        .strip_prefix('"')
-        .and_then(|v| v.strip_suffix('"'))
-    else {
+    let Some(inner) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
         return value.to_string();
     };
     inner
@@ -190,23 +107,15 @@ fn unquote(value: &str) -> String {
         .replace("\\\\", "\\")
 }
 
-fn quote(value: &str) -> String {
-    format!(
-        "\"{}\"",
-        value
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-    )
-}
-
-fn escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
+fn format_number(value: f64) -> String {
+    if value.fract().abs() < 1e-9 {
+        format!("{}", value as i64)
+    } else {
+        format!("{value:.6}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    }
 }
 
 #[cfg(test)]
@@ -219,9 +128,8 @@ mod tests {
     }
 
     #[test]
-    fn stop_records_become_svg_stops() {
-        let xml = svg_stops("0 #ff0000ff, 1 #0000ffff");
-        assert!(xml.contains("offset=\"0\""));
-        assert!(xml.contains("#0000ffff"));
+    fn object_bbox_radius_resolves_to_geometry() {
+        assert!((resolve_radius("50%", "objectBoundingBox", 20.0, 10.0) - 10.0).abs() < 1e-9);
+        assert!((resolve_radius("0.5", "objectBoundingBox", 20.0, 10.0) - 10.0).abs() < 1e-9);
     }
 }
