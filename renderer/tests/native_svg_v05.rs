@@ -1,5 +1,5 @@
 use srng::runtime::{execute_json, RuntimeOptions};
-use srng_renderer::{prepare_scene, Paint, RevisionGate};
+use srng_renderer::{prepare_scene, Command, FilterOp, GradientSpread, Paint, RevisionGate};
 
 fn scene(source: &str) -> srng::runtime::Scene {
     let ir = srng::compile_to_json(source, "native-svg-v05.srng");
@@ -19,9 +19,11 @@ rect r {
     fill: radial-gradient;
     gradient-cx: 32;
     gradient-cy: 32;
-    gradient-fx: 32;
-    gradient-fy: 32;
+    gradient-fx: 24;
+    gradient-fy: 24;
+    gradient-fr: 4;
     gradient-r: 32;
+    gradient-spread: reflect;
     gradient-stops: 0 #ffffffff, 1 #000000ff;
 }
 "#;
@@ -30,7 +32,8 @@ rect r {
     let prepared = prepare_scene(&scene(source), revision, &gate);
     assert!(prepared.commands.iter().any(|command| matches!(
         command,
-        srng_renderer::Command::Fill { paint: Paint::RadialGradient { .. }, .. }
+        Command::Fill { paint: Paint::RadialGradient { focal_radius, spread: GradientSpread::Reflect, .. }, .. }
+            if (*focal_radius - 4.0).abs() < 1e-6
     )));
     assert!(!prepared.diagnostics.iter().any(|d| d.severity == "error"), "{:?}", prepared.diagnostics);
 }
@@ -53,5 +56,44 @@ text label {
     let gate = RevisionGate::default();
     let revision = gate.begin();
     let prepared = prepare_scene(&scene(source), revision, &gate);
-    assert!(prepared.commands.iter().any(|command| matches!(command, srng_renderer::Command::Fill { .. })));
+    assert!(prepared.commands.iter().any(|command| matches!(command, Command::Fill { .. })));
+}
+
+#[test]
+fn native_filter_chain_lowers_to_filter_block() {
+    let source = r#"
+srng 0.1;
+rect filtered {
+    position: 8px 8px;
+    size: 24px 24px;
+    fill: #ff0000ff;
+    filter-chain: "blur(2 3); offset(4 -1)";
+}
+"#;
+    let gate = RevisionGate::default();
+    let revision = gate.begin();
+    let prepared = prepare_scene(&scene(source), revision, &gate);
+    assert!(prepared.commands.iter().any(|command| matches!(
+        command,
+        Command::PushFilter { filters }
+            if matches!(filters.as_slice(), [FilterOp::GaussianBlur { .. }, FilterOp::Offset { .. }])
+    )));
+    assert!(prepared.commands.iter().any(|command| matches!(command, Command::PopFilter)));
+}
+
+#[test]
+fn embedded_data_image_lowers_to_image_command() {
+    let source = r#"
+srng 0.1;
+group image {
+    position: 2px 3px;
+    size: 8px 9px;
+    image-data: "data:image/png;base64,iVBORw0KGgo=";
+    image-preserve-aspect-ratio: "xMidYMid meet";
+}
+"#;
+    let gate = RevisionGate::default();
+    let revision = gate.begin();
+    let prepared = prepare_scene(&scene(source), revision, &gate);
+    assert!(prepared.commands.iter().any(|command| matches!(command, Command::DrawImage { image } if image.width == 8.0 && image.height == 9.0)));
 }
