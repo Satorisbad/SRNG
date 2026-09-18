@@ -10,6 +10,8 @@ mod svg_base;
 #[path = "svg_v4.rs"]
 mod svg_v4;
 #[path = "svg_final.rs"]
+mod svg_final;
+#[path = "svg_filter_v06.rs"]
 pub mod svg;
 #[path = "runtime_v2.rs"]
 pub mod runtime;
