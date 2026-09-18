@@ -182,7 +182,7 @@ fn set_paint(context: &mut RenderContext, paint: &Paint) -> Result<(), String> {
                 color: color(stop.color).into(),
             }).collect());
             context.set_paint(
-                Gradient::new_two_point_radial(*focal, 0.0, *center, *radius)
+                Gradient::new_two_point_radial(*focal, 0.0, *center, *radius as f32)
                     .with_stops(stops),
             );
         }
