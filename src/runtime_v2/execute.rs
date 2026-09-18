@@ -162,7 +162,10 @@ fn execute_json_from(
         }
 
         let mut instance_nodes = Vec::new();
-        for reference in references.iter().filter(|reference| reference.active && reference.resolved && !reference.resolved_nodes.is_empty()) {
+        for reference in references
+            .iter_mut()
+            .filter(|reference| reference.active && reference.resolved && !reference.resolved_nodes.is_empty())
+        {
             let mut children = reference.resolved_nodes.clone();
             children.sort_by_key(|node| node.paint_order);
             for child in children {
@@ -175,7 +178,12 @@ fn execute_json_from(
                 properties.insert("resource-source-id".into(), child.source_id.clone());
                 properties.insert("resource-provenance".into(), reference.provenance.clone());
                 apply_instance_style(&mut properties, &reference.properties);
-                let geometry = instantiate_geometry(&child.geometry, &reference.geometry, &reference.linked_properties, &reference.properties);
+                let geometry = instantiate_geometry(
+                    &child.geometry,
+                    &reference.geometry,
+                    &reference.linked_properties,
+                    &reference.properties,
+                );
                 apply_instance_transform(&mut properties, &reference.properties, &geometry);
                 instance_nodes.push(SceneNode {
                     id: format!("{}::{}", reference.id, child.source_id),
@@ -209,7 +217,7 @@ fn execute_json_from(
         .collect::<HashSet<_>>();
     for relation in &mut relations {
         let resource_relation = relation.properties.get("kind").map(|value| unquote(value)).as_deref() == Some("contains")
-            && nodes.iter().any(|node| node.id == relation.from && node.properties.get("resource-only").is_some()) ;
+            && nodes.iter().any(|node| node.id == relation.from && node.properties.get("resource-only").is_some());
         relation.active = !resource_relation
             && active_ids.contains(relation.from.as_str())
             && active_ids.contains(relation.to.as_str());
