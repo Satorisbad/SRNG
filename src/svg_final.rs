@@ -6,10 +6,12 @@ pub use crate::svg_v4::strip_svg_provenance;
 /// `svg_v4` promotes source-attribute semantics. This last normalization pass
 /// also catches presentation values originating from inline `style`, which the
 /// lower importer records as `svg-opacity` compatibility fields rather than
-/// `svg-attr-*` fields.
+/// `svg-attr-*` fields. Reusable resources are then promoted into native SRNG
+/// declarations without reconstructing SVG XML or flattening group contents.
 pub fn import_svg(svg: &str, source_name: &str, options: &ImportOptions) -> ImportResult {
     let mut result = crate::svg_v4::import_svg(svg, source_name, options);
     promote_style_semantics(&mut result.source);
+    crate::resource_reference::promote_reusable_resources(svg, &mut result);
     let has_opacity = result.source.lines().any(|line| {
         let line = line.trim_start();
         line.starts_with("opacity:") || line.starts_with("fill-opacity:") || line.starts_with("stroke-opacity:")
@@ -60,5 +62,17 @@ mod tests {
         let result = import_svg(svg, "style.svg", &ImportOptions::default());
         assert!(result.source.contains("opacity:"));
         assert!(result.source.contains("fill-opacity:"));
+    }
+
+    #[test]
+    fn referenced_group_is_materialized_as_resource_subtree() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg"><defs><g id="badge"><rect id="back" width="20" height="10" fill="#f00"/><circle id="dot" cx="5" cy="5" r="2" fill="#00f"/></g></defs><use id="badge_instance" href="#badge" x="30" y="40"/></svg>"##;
+        let result = import_svg(svg, "group.svg", &ImportOptions::default());
+        assert!(result.source.contains("group badge {"));
+        assert!(result.source.contains("rect back {"));
+        assert!(result.source.contains("circle dot {"));
+        assert!(result.source.contains("relation badge -> back"));
+        assert!(result.source.contains("relation badge -> dot"));
+        assert!(result.source.contains("reference badge_instance = \"#badge\""));
     }
 }
