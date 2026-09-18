@@ -110,3 +110,28 @@ fn use_style_only_overrides_inheritable_source_paint() {
     assert_eq!(inherits.properties.get("fill").map(String::as_str), Some("#0000ff"));
     assert_eq!(fixed.properties.get("fill").map(String::as_str), Some("#ff0000"));
 }
+
+#[test]
+fn use_translation_is_applied_to_resolved_child_geometry() {
+    let scene = scene_from_svg(r##"
+<svg xmlns="http://www.w3.org/2000/svg">
+  <defs><g id="item"><rect id="box" x="1" y="2" width="3" height="4" fill="#fff"/></g></defs>
+  <use id="moved" href="#item" x="10" y="20" transform="translate(7 8)"/>
+</svg>
+"##);
+    let node = scene.nodes.iter().find(|node| node.id == "moved::box").unwrap();
+    assert_eq!(node.geometry.x, Some(18.0));
+    assert_eq!(node.geometry.y, Some(30.0));
+}
+
+#[test]
+fn inherited_fill_defaults_to_svg_black() {
+    let scene = scene_from_svg(r##"
+<svg xmlns="http://www.w3.org/2000/svg">
+  <defs><g id="item"><rect id="box" width="3" height="4"/></g></defs>
+  <use id="plain" href="#item"/>
+</svg>
+"##);
+    let node = scene.nodes.iter().find(|node| node.id == "plain::box").unwrap();
+    assert_eq!(node.properties.get("fill").map(String::as_str), Some("#000000"));
+}
