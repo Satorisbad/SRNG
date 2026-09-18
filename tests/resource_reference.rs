@@ -126,12 +126,22 @@ fn use_translation_is_applied_to_resolved_child_geometry() {
 
 #[test]
 fn inherited_fill_defaults_to_svg_black() {
-    let scene = scene_from_svg(r##"
+    let svg = r##"
 <svg xmlns="http://www.w3.org/2000/svg">
   <defs><g id="item"><rect id="box" width="3" height="4"/></g></defs>
   <use id="plain" href="#item"/>
 </svg>
-"##);
+"##;
+    let imported = import_svg(svg, "resource-test.svg", &ImportOptions::default());
+    let ir = srng::compile_to_json(&imported.source, "resource-test.srng");
+    let scene = execute_json(&ir, &RuntimeOptions::default()).unwrap();
     let node = scene.nodes.iter().find(|node| node.id == "plain::box").unwrap();
-    assert_eq!(node.properties.get("fill").map(String::as_str), Some("#000000"));
+    assert_eq!(
+        node.properties.get("fill").map(String::as_str),
+        Some("#000000"),
+        "imported source:\n{}\nnode properties: {:#?}\nreference: {:#?}",
+        imported.source,
+        node.properties,
+        scene.references.iter().find(|reference| reference.id == "plain")
+    );
 }
