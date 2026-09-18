@@ -1,0 +1,49 @@
+use crate::filter::*;
+use crate::Rgba;
+use std::collections::HashMap;
+use vello_cpu::Pixmap;
+
+pub fn execute_filter_graph(source:&Pixmap,graph:&FilterGraph,width:u16,height:u16)->Result<Pixmap,String>{
+    let mut results:HashMap<String,Pixmap>=HashMap::new();
+    for node in &graph.nodes{
+        let output=match &node.op{
+            FilterPrimitive::GaussianBlur{input,sigma_x,sigma_y}=>{let mut p=resolve(input,source,&results,width,height)?;gaussian_blur(&mut p,*sigma_x,*sigma_y,width,height);p}
+            FilterPrimitive::Offset{input,dx,dy}=>{let mut p=resolve(input,source,&results,width,height)?;offset_pixmap(&mut p,dx.round()as i32,dy.round()as i32,width,height);p}
+            FilterPrimitive::Blend{input,input2,mode}=>{let a=resolve(input,source,&results,width,height)?;let b=resolve(input2,source,&results,width,height)?;blend(&a,&b,*mode,width,height)}
+            FilterPrimitive::Composite{input,input2,operator}=>{let a=resolve(input,source,&results,width,height)?;let b=resolve(input2,source,&results,width,height)?;composite(&a,&b,*operator,width,height)}
+            FilterPrimitive::ColorMatrix{input,matrix}=>{let mut p=resolve(input,source,&results,width,height)?;color_matrix(&mut p,matrix);p}
+            FilterPrimitive::Flood{color}=>flood(*color,width,height),
+            FilterPrimitive::Merge{inputs}=>merge(inputs,source,&results,width,height)?,
+            FilterPrimitive::Morphology{input,operator,radius_x,radius_y}=>{let p=resolve(input,source,&results,width,height)?;morphology(&p,*operator,radius_x.round()as i32,radius_y.round()as i32,width,height)}
+            FilterPrimitive::ComponentTransfer{input,red,green,blue,alpha}=>{let mut p=resolve(input,source,&results,width,height)?;component_transfer(&mut p,red,green,blue,alpha);p}
+            FilterPrimitive::Unsupported{..}=>resolve(&FilterInput::SourceGraphic,source,&results,width,height)?,
+        };
+        results.insert(node.result.clone(),output);
+    }
+    let mut output=resolve(&graph.output,source,&results,width,height)?;
+    clip_region(&mut output,graph.region,width,height);
+    Ok(output)
+}
+
+fn resolve(input:&FilterInput,source:&Pixmap,results:&HashMap<String,Pixmap>,width:u16,height:u16)->Result<Pixmap,String>{match input{FilterInput::SourceGraphic=>Ok(copy_pixmap(source,width,height)),FilterInput::SourceAlpha=>Ok(source_alpha(source,width,height)),FilterInput::Named(name)=>results.get(name).map(|p|copy_pixmap(p,width,height)).ok_or_else(||format!("filter input result `{name}` does not exist"))}}
+fn copy_pixmap(src:&Pixmap,width:u16,height:u16)->Pixmap{let mut out=Pixmap::new(width,height);out.data_as_u8_slice_mut().copy_from_slice(src.data_as_u8_slice());out.recompute_may_have_transparency();out}
+fn source_alpha(src:&Pixmap,width:u16,height:u16)->Pixmap{let mut out=Pixmap::new(width,height);for(dst,s)in out.data_as_u8_slice_mut().chunks_exact_mut(4).zip(src.data_as_u8_slice().chunks_exact(4)){dst[0]=0;dst[1]=0;dst[2]=0;dst[3]=s[3];}out.recompute_may_have_transparency();out}
+fn flood(c:Rgba,width:u16,height:u16)->Pixmap{let mut out=Pixmap::new(width,height);for p in out.data_as_u8_slice_mut().chunks_exact_mut(4){p.copy_from_slice(&[c.r,c.g,c.b,c.a]);}out.recompute_may_have_transparency();out}
+
+fn blend(a:&Pixmap,b:&Pixmap,mode:BlendMode,width:u16,height:u16)->Pixmap{let mut out=Pixmap::new(width,height);for((d,pa),pb)in out.data_as_u8_slice_mut().chunks_exact_mut(4).zip(a.data_as_u8_slice().chunks_exact(4)).zip(b.data_as_u8_slice().chunks_exact(4)){let aa=f64::from(pa[3])/255.0;let ab=f64::from(pb[3])/255.0;let ao=aa+ab-aa*ab;for c in 0..3{let ca=f64::from(pa[c])/255.0;let cb=f64::from(pb[c])/255.0;let m=match mode{BlendMode::Normal=>ca,BlendMode::Multiply=>ca*cb,BlendMode::Screen=>1.0-(1.0-ca)*(1.0-cb),BlendMode::Darken=>ca.min(cb),BlendMode::Lighten=>ca.max(cb)};let premul=(1.0-ab)*ca*aa+(1.0-aa)*cb*ab+aa*ab*m;d[c]=if ao>0.0{(premul/ao*255.0).round().clamp(0.0,255.0)as u8}else{0};}d[3]=(ao*255.0).round().clamp(0.0,255.0)as u8;}out.recompute_may_have_transparency();out}
+fn composite(a:&Pixmap,b:&Pixmap,op:CompositeOperator,width:u16,height:u16)->Pixmap{let mut out=Pixmap::new(width,height);for((d,pa),pb)in out.data_as_u8_slice_mut().chunks_exact_mut(4).zip(a.data_as_u8_slice().chunks_exact(4)).zip(b.data_as_u8_slice().chunks_exact(4)){let aa=f64::from(pa[3])/255.0;let ab=f64::from(pb[3])/255.0;let(fa,fb)=match op{CompositeOperator::Over=>(1.0,1.0-aa),CompositeOperator::In=>(ab,0.0),CompositeOperator::Out=>(1.0-ab,0.0),CompositeOperator::Atop=>(ab,1.0-aa),CompositeOperator::Xor=>(1.0-ab,1.0-aa)};let ao=(aa*fa+ab*fb).clamp(0.0,1.0);for c in 0..3{let va=f64::from(pa[c])/255.0*aa*fa;let vb=f64::from(pb[c])/255.0*ab*fb;d[c]=if ao>0.0{((va+vb)/ao*255.0).round().clamp(0.0,255.0))as u8}else{0};}d[3]=(ao*255.0).round()as u8;}out.recompute_may_have_transparency();out}
+fn merge(inputs:&[FilterInput],source:&Pixmap,results:&HashMap<String,Pixmap>,width:u16,height:u16)->Result<Pixmap,String>{let mut out=Pixmap::new(width,height);for input in inputs{let layer=resolve(input,source,results,width,height)?;out=composite(&layer,&out,CompositeOperator::Over,width,height);}Ok(out)}
+
+fn color_matrix(p:&mut Pixmap,m:&[f64;20]){for px in p.data_as_u8_slice_mut().chunks_exact_mut(4){let v=[f64::from(px[0])/255.0,f64::from(px[1])/255.0,f64::from(px[2])/255.0,f64::from(px[3])/255.0];let mut o=[0.0;4];for row in 0..4{o[row]=(m[row*5]*v[0]+m[row*5+1]*v[1]+m[row*5+2]*v[2]+m[row*5+3]*v[3]+m[row*5+4]).clamp(0.0,1.0);}for c in 0..4{px[c]=(o[c]*255.0).round()as u8;}}p.recompute_may_have_transparency();}
+fn component_transfer(p:&mut Pixmap,r:&TransferFunction,g:&TransferFunction,b:&TransferFunction,a:&TransferFunction){for px in p.data_as_u8_slice_mut().chunks_exact_mut(4){px[0]=(transfer(r,f64::from(px[0])/255.0)*255.0).round().clamp(0.0,255.0)as u8;px[1]=(transfer(g,f64::from(px[1])/255.0)*255.0).round().clamp(0.0,255.0)as u8;px[2]=(transfer(b,f64::from(px[2])/255.0)*255.0).round().clamp(0.0,255.0)as u8;px[3]=(transfer(a,f64::from(px[3])/255.0)*255.0).round().clamp(0.0,255.0)as u8;}p.recompute_may_have_transparency();}
+fn transfer(f:&TransferFunction,x:f64)->f64{match f{TransferFunction::Identity=>x,TransferFunction::Table(v)=>sample_table(v,x,true),TransferFunction::Discrete(v)=>sample_table(v,x,false),TransferFunction::Linear{slope,intercept}=>(*slope*x+*intercept).clamp(0.0,1.0),TransferFunction::Gamma{amplitude,exponent,offset}=>(*amplitude*x.powf(*exponent)+*offset).clamp(0.0,1.0)}}
+fn sample_table(v:&[f64],x:f64,linear:bool)->f64{if v.is_empty(){return x}if v.len()==1{return v[0].clamp(0.0,1.0)}let t=x.clamp(0.0,1.0)*(v.len()-1)as f64;if !linear{return v[(x.clamp(0.0,0.999999)*v.len()as f64)as usize].clamp(0.0,1.0)}let i=t.floor()as usize;let j=(i+1).min(v.len()-1);let f=t-i as f64;(v[i]*(1.0-f)+v[j]*f).clamp(0.0,1.0)}
+
+fn morphology(src:&Pixmap,op:MorphologyOperator,rx:i32,ry:i32,width:u16,height:u16)->Pixmap{let w=usize::from(width);let h=usize::from(height);let mut out=Pixmap::new(width,height);let s=src.data_as_u8_slice();let d=out.data_as_u8_slice_mut();for y in 0..h{for x in 0..w{for c in 0..4{let mut value=match op{MorphologyOperator::Erode=>255u8,MorphologyOperator::Dilate=>0u8};for yy in -ry..=ry{for xx in -rx..=rx{let nx=(x as i32+xx).clamp(0,w as i32-1)as usize;let ny=(y as i32+yy).clamp(0,h as i32-1)as usize;let v=s[(ny*w+nx)*4+c];value=match op{MorphologyOperator::Erode=>value.min(v),MorphologyOperator::Dilate=>value.max(v)};}}d[(y*w+x)*4+c]=value;}}}out.recompute_may_have_transparency();out}
+
+fn gaussian_blur(pixmap:&mut Pixmap,sigma_x:f64,sigma_y:f64,width:u16,height:u16){let rx=(sigma_x*3.0).ceil().clamp(0.0,64.0)as i32;let ry=(sigma_y*3.0).ceil().clamp(0.0,64.0)as i32;if rx==0&&ry==0{return;}let mut data=pixmap.data_as_u8_slice().to_vec();if rx>0{data=blur_axis(&data,usize::from(width),usize::from(height),rx,true);}if ry>0{data=blur_axis(&data,usize::from(width),usize::from(height),ry,false);}pixmap.data_as_u8_slice_mut().copy_from_slice(&data);pixmap.recompute_may_have_transparency();}
+fn blur_axis(src:&[u8],w:usize,h:usize,r:i32,horizontal:bool)->Vec<u8>{let sigma=(r as f64/3.0).max(0.333);let mut weights=Vec::with_capacity((r*2+1)as usize);let mut sum=0.0;for i in -r..=r{let v=(-((i*i)as f64)/(2.0*sigma*sigma)).exp();weights.push(v);sum+=v;}for v in &mut weights{*v/=sum;}let mut out=vec![0;src.len()];for y in 0..h{for x in 0..w{for c in 0..4{let mut acc=0.0;for(i,&weight)in(-r..=r).zip(weights.iter()){let(nx,ny)=if horizontal{((x as i32+i).clamp(0,w as i32-1)as usize,y)}else{(x,(y as i32+i).clamp(0,h as i32-1)as usize)};acc+=f64::from(src[(ny*w+nx)*4+c])*weight;}out[(y*w+x)*4+c]=acc.round().clamp(0.0,255.0)as u8;}}}out}
+fn offset_pixmap(pixmap:&mut Pixmap,dx:i32,dy:i32,width:u16,height:u16){let w=usize::from(width);let h=usize::from(height);let src=pixmap.data_as_u8_slice().to_vec();let dst=pixmap.data_as_u8_slice_mut();dst.fill(0);for y in 0..h{for x in 0..w{let nx=x as i32+dx;let ny=y as i32+dy;if nx>=0&&ny>=0&&nx<w as i32&&ny<h as i32{let si=(y*w+x)*4;let di=(ny as usize*w+nx as usize)*4;dst[di..di+4].copy_from_slice(&src[si..si+4]);}}}pixmap.recompute_may_have_transparency();}
+fn clip_region(p:&mut Pixmap,r:FilterRegion,width:u16,height:u16){let left=r.x.floor()as i32;let top=r.y.floor()as i32;let right=(r.x+r.width).ceil()as i32;let bottom=(r.y+r.height).ceil()as i32;let w=usize::from(width);let h=usize::from(height);for y in 0..h{for x in 0..w{if x as i32<left||x as i32>=right||y as i32<top||y as i32>=bottom{let i=(y*w+x)*4;p.data_as_u8_slice_mut()[i..i+4].fill(0);}}}p.recompute_may_have_transparency();}
+
+#[cfg(test)]mod tests{use super::*;#[test]fn source_alpha_zeroes_rgb(){let mut p=Pixmap::new(1,1);p.data_as_u8_slice_mut().copy_from_slice(&[10,20,30,40]);let a=source_alpha(&p,1,1);assert_eq!(a.data_as_u8_slice(),&[0,0,0,40]);}#[test]fn flood_fills(){let p=flood(Rgba{r:1,g:2,b:3,a:4},2,1);assert_eq!(p.data_as_u8_slice(),&[1,2,3,4,1,2,3,4]);}}
