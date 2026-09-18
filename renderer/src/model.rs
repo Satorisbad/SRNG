@@ -13,7 +13,7 @@ pub struct PreparedScene {
 pub enum Command {
     PushClip { path: PathData, rule: FillRule },
     PopClip,
-    PushMaskSvg { svg: String },
+    PushMask { records: Vec<VectorRecord> },
     PopMask,
     Fill { path: PathData, paint: Paint, rule: FillRule },
     Stroke { path: PathData, paint: Paint, style: StrokeStyle },
@@ -22,6 +22,12 @@ pub enum Command {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathData {
     pub svg: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VectorRecord {
+    pub path: PathData,
+    pub paint: Paint,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -37,6 +43,11 @@ pub enum Paint {
         focal: (f64, f64),
         radius: f64,
         stops: Vec<GradientStop>,
+    },
+    Pattern {
+        records: Vec<VectorRecord>,
+        tile_width: f64,
+        tile_height: f64,
     },
     SvgPattern {
         svg: String,
