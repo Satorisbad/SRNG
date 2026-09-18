@@ -160,6 +160,36 @@ fn execute_json_from(
                 }
             }
         }
+
+        let mut instance_nodes = Vec::new();
+        for reference in references.iter().filter(|reference| reference.active && reference.resolved && !reference.resolved_nodes.is_empty()) {
+            let mut children = reference.resolved_nodes.clone();
+            children.sort_by_key(|node| node.paint_order);
+            for child in children {
+                if child.kind == "group" {
+                    continue;
+                }
+                let mut properties = child.properties.clone();
+                properties.remove("resource-only");
+                properties.insert("resource-instance".into(), reference.id.clone());
+                properties.insert("resource-source-id".into(), child.source_id.clone());
+                properties.insert("resource-provenance".into(), reference.provenance.clone());
+                apply_instance_style(&mut properties, &reference.properties);
+                let geometry = instantiate_geometry(&child.geometry, &reference.geometry, &reference.linked_properties, &reference.properties);
+                apply_instance_transform(&mut properties, &reference.properties, &geometry);
+                instance_nodes.push(SceneNode {
+                    id: format!("{}::{}", reference.id, child.source_id),
+                    kind: child.kind,
+                    source: child.source,
+                    properties,
+                    geometry,
+                    paint_order: reference.paint_order.saturating_add(child.paint_order),
+                    active: true,
+                });
+            }
+            reference.active = false;
+        }
+        nodes.extend(instance_nodes);
     } else {
         for reference in &mut references {
             reference.active = false;
@@ -178,9 +208,12 @@ fn execute_json_from(
         )
         .collect::<HashSet<_>>();
     for relation in &mut relations {
-        relation.active = active_ids.contains(relation.from.as_str())
+        let resource_relation = relation.properties.get("kind").map(|value| unquote(value)).as_deref() == Some("contains")
+            && nodes.iter().any(|node| node.id == relation.from && node.properties.get("resource-only").is_some()) ;
+        relation.active = !resource_relation
+            && active_ids.contains(relation.from.as_str())
             && active_ids.contains(relation.to.as_str());
-        if !relation.active {
+        if !relation.active && !resource_relation {
             diagnostics.push(runtime_diagnostic(
                 "error",
                 "R210",
@@ -211,4 +244,123 @@ fn execute_json_from(
         animations,
         diagnostics,
     })
+}
+
+fn apply_instance_style(properties: &mut BTreeMap<String, String>, instance: &BTreeMap<String, String>) {
+    for key in ["fill", "stroke"] {
+        let inherits = properties
+            .get(&format!("resource-inherit-{key}"))
+            .is_some_and(|value| unquote(value) == "true");
+        if inherits {
+            if let Some(value) = instance.get(key) {
+                properties.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+    for key in ["opacity", "fill-opacity", "stroke-opacity"] {
+        if let Some(value) = instance.get(key) {
+            properties.insert(key.to_string(), value.clone());
+        }
+    }
+}
+
+fn instantiate_geometry(
+    source: &Geometry,
+    instance: &Geometry,
+    target_properties: &BTreeMap<String, String>,
+    instance_properties: &BTreeMap<String, String>,
+) -> Geometry {
+    let dx = instance.x.unwrap_or(0.0);
+    let dy = instance.y.unwrap_or(0.0);
+    let mut scale_x = 1.0;
+    let mut scale_y = 1.0;
+    let mut offset_x = dx;
+    let mut offset_y = dy;
+
+    if target_properties.get("resource-kind").map(|value| unquote(value)).as_deref() == Some("symbol") {
+        if let (Some(viewbox), Some(width), Some(height)) = (
+            target_properties.get("viewbox").and_then(|value| parse_viewbox_runtime(value)),
+            instance.width,
+            instance.height,
+        ) {
+            let preserve = instance_properties
+                .get("preserve-aspect-ratio")
+                .or_else(|| target_properties.get("preserve-aspect-ratio"))
+                .map(|value| unquote(value))
+                .unwrap_or_else(|| "xMidYMid meet".into());
+            let mapped = symbol_mapping(viewbox, width, height, &preserve);
+            scale_x = mapped.0;
+            scale_y = mapped.1;
+            offset_x += mapped.2;
+            offset_y += mapped.3;
+        }
+    }
+
+    Geometry {
+        x: source.x.map(|value| offset_x + value * scale_x),
+        y: source.y.map(|value| offset_y + value * scale_y),
+        width: source.width.map(|value| value * scale_x.abs()),
+        height: source.height.map(|value| value * scale_y.abs()),
+    }
+}
+
+fn parse_viewbox_runtime(value: &str) -> Option<(f64, f64, f64, f64)> {
+    let value = unquote(value);
+    let values = value
+        .split(|ch: char| ch == ',' || ch.is_whitespace())
+        .filter(|value| !value.is_empty())
+        .map(str::parse::<f64>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    if values.len() != 4 || values[2] <= 0.0 || values[3] <= 0.0 {
+        return None;
+    }
+    Some((values[0], values[1], values[2], values[3]))
+}
+
+fn symbol_mapping(viewbox: (f64, f64, f64, f64), width: f64, height: f64, preserve: &str) -> (f64, f64, f64, f64) {
+    let (min_x, min_y, vb_width, vb_height) = viewbox;
+    let sx = width / vb_width;
+    let sy = height / vb_height;
+    if preserve.trim() == "none" {
+        return (sx, sy, -min_x * sx, -min_y * sy);
+    }
+    let meet = !preserve.split_whitespace().any(|token| token == "slice");
+    let scale = if meet { sx.min(sy) } else { sx.max(sy) };
+    let rendered_width = vb_width * scale;
+    let rendered_height = vb_height * scale;
+    let align = preserve.split_whitespace().next().unwrap_or("xMidYMid");
+    let extra_x = if align.contains("xMax") { width - rendered_width } else if align.contains("xMid") { (width - rendered_width) / 2.0 } else { 0.0 };
+    let extra_y = if align.contains("YMax") { height - rendered_height } else if align.contains("YMid") { (height - rendered_height) / 2.0 } else { 0.0 };
+    (scale, scale, extra_x - min_x * scale, extra_y - min_y * scale)
+}
+
+fn apply_instance_transform(properties: &mut BTreeMap<String, String>, instance: &BTreeMap<String, String>, geometry: &Geometry) {
+    let Some(transform) = instance.get("transform") else { return; };
+    let transform = unquote(transform);
+    properties.insert("transform".into(), format!("\"{}\"", transform));
+    if let Some((tx, ty)) = parse_translate(&transform) {
+        let current = properties
+            .get("position")
+            .and_then(|value| resolve_pair(value, &HashMap::new(), &RuntimeOptions::default()).ok())
+            .or_else(|| Some((geometry.x.unwrap_or(0.0), geometry.y.unwrap_or(0.0))));
+        if let Some((x, y)) = current {
+            properties.insert("position".into(), format!("{}px {}px", x + tx, y + ty));
+        }
+    }
+}
+
+fn parse_translate(transform: &str) -> Option<(f64, f64)> {
+    let inner = transform.trim().strip_prefix("translate(")?.strip_suffix(')')?;
+    let values = inner
+        .split(|ch: char| ch == ',' || ch.is_whitespace())
+        .filter(|value| !value.is_empty())
+        .map(str::parse::<f64>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    match values.as_slice() {
+        [x] => Some((*x, 0.0)),
+        [x, y] => Some((*x, *y)),
+        _ => None,
+    }
 }
