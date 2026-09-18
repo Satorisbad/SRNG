@@ -32,6 +32,12 @@ pub enum Paint {
         end: (f64, f64),
         stops: Vec<GradientStop>,
     },
+    RadialGradient {
+        center: (f64, f64),
+        focal: (f64, f64),
+        radius: f64,
+        stops: Vec<GradientStop>,
+    },
     SvgPattern {
         svg: String,
         tile_width: f64,
