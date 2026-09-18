@@ -1,0 +1,19 @@
+srng 0.1;
+
+rect filtered {
+    position: 8px 8px;
+    size: 24px 24px;
+    fill: #ff0000ff;
+    filter-graph: "feGaussianBlur(in=SourceAlpha sigma_x=1 sigma_y=1)->alpha_blur; feOffset(in=alpha_blur dx=3 dy=2)->shadow_alpha; feFlood(color=#0000ffff)->blue; feComposite(in=blue in2=shadow_alpha operator=in)->shadow; feMerge(shadow SourceGraphic)->final";
+    filter-units: "userSpaceOnUse";
+    filter-x: "0";
+    filter-y: "0";
+    filter-width: "64";
+    filter-height: "64";
+}
+
+rect unaffected {
+    position: 48px 48px;
+    size: 8px 8px;
+    fill: #00ff00ff;
+}
