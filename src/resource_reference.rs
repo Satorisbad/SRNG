@@ -1,6 +1,6 @@
 use crate::svg_base::{ImportDiagnostic, ImportResult};
 use roxmltree::{Document as XmlDocument, Node};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 const INHERITED_STYLE_KEYS: &[&str] = &[
     "fill",
@@ -352,11 +352,7 @@ fn declared_ids(source: &str) -> HashSet<String> {
                 return None;
             }
             let fields = trimmed.split_whitespace().collect::<Vec<_>>();
-            if fields.first() == Some(&"reference") {
-                fields.get(1).map(|v| (*v).to_string())
-            } else {
-                fields.get(1).map(|v| (*v).to_string())
-            }
+            fields.get(1).map(|v| (*v).to_string())
         })
         .collect()
 }
