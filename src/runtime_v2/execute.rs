@@ -144,10 +144,12 @@ fn execute_json_from(
                     reference.resolved_kind = Some(target.kind);
                     reference.linked_geometry = Some(target.geometry);
                     reference.linked_properties = target.properties;
+                    reference.resolved_nodes = target.nodes;
                 }
                 Err(error) => {
                     reference.resolved = false;
                     reference.active = false;
+                    reference.resolved_nodes.clear();
                     diagnostics.push(runtime_diagnostic(
                         "error",
                         error.code,
