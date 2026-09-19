@@ -124,31 +124,43 @@ fn diagnostic(severity: &str, code: &str, message: impl Into<String>) -> StudioD
 #[cfg(test)]
 mod limits_tests {
     use super::*;
+    use srng::svg::{import_svg, ImportOptions};
+
+    fn imported_srng(svg: &str, name: &str) -> String {
+        let imported = import_svg(svg, name, &ImportOptions::default());
+        assert!(
+            !imported.diagnostics.iter().any(|d| d.severity == "error"),
+            "{:?}",
+            imported.diagnostics
+        );
+        imported.source
+    }
 
     #[test]
     fn rejects_excessive_canvas_before_raster_allocation() {
-        let source = r#"
-srng 0.1;
-canvas huge { size: 50000px 50000px; }
-rect small { position: 0px 0px; size: 10px 10px; fill: #fff; }
-"#;
-        let (image, diagnostics) = render_srng(source, "huge.srng");
+        let source = imported_srng(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="50000" height="50000"><rect width="10" height="10" fill="#fff"/></svg>"#,
+            "huge.svg",
+        );
+        let (image, diagnostics) = render_srng(&source, "huge.srng");
         assert!(image.is_none());
-        assert!(diagnostics.iter().any(|d| d.code == "UI301"));
+        assert!(
+            diagnostics.iter().any(|d| d.code == "UI301"),
+            "{diagnostics:?}"
+        );
     }
 
     #[test]
     fn accepts_normal_render_budget() {
-        let source = r#"
-srng 0.1;
-canvas normal { size: 640px 480px; }
-rect panel { position: 0px 0px; size: 640px 480px; fill: #fff; }
-"#;
-        let (image, diagnostics) = render_srng(source, "normal.srng");
+        let source = imported_srng(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="480" fill="#fff"/></svg>"#,
+            "normal.svg",
+        );
+        let (image, diagnostics) = render_srng(&source, "normal.srng");
         assert!(
             !diagnostics.iter().any(|d| d.code == "UI301"),
             "{diagnostics:?}"
         );
-        assert!(image.is_some());
+        assert!(image.is_some(), "{diagnostics:?}");
     }
 }
