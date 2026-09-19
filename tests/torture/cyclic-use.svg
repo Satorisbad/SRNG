@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96">
+  <defs>
+    <g id="a"><rect x="8" y="8" width="24" height="24" fill="#4f7cff"/><use href="#b"/></g>
+    <g id="b"><circle cx="48" cy="48" r="12" fill="#fff"/><use href="#c"/></g>
+    <g id="c"><path d="M60 60 L84 60 L72 84 Z" fill="#8fb3ff"/><use href="#a"/></g>
+  </defs>
+  <use href="#a"/>
+  <rect x="2" y="2" width="92" height="92" fill="none" stroke="#fff"/>
+</svg>
