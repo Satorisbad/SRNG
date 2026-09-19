@@ -14,6 +14,14 @@ fn temp_dir() -> std::path::PathBuf {
     path
 }
 
+fn cleanup_temp_dir(path: impl AsRef<std::path::Path>) {
+    match fs::remove_dir_all(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => panic!("failed to clean SRNG regression temp directory: {error}"),
+    }
+}
+
 #[test]
 fn rejects_local_reference_cycles() {
     let scene = run(r#"
@@ -33,7 +41,7 @@ fn rejects_cross_file_reference_cycles() {
     let scene = execute_file(dir.join("a.srng"), &RuntimeOptions::default()).unwrap();
     assert!(!scene.references[0].resolved);
     assert!(scene.diagnostics.iter().any(|d| d.code == "R234"));
-    fs::remove_dir_all(dir).unwrap();
+    cleanup_temp_dir(dir);
 }
 
 #[test]
@@ -62,7 +70,7 @@ fn linked_geometry_and_provenance_are_retained() {
     assert_eq!(reference.linked_geometry.as_ref().unwrap().x, Some(16.0));
     assert_eq!(reference.linked_geometry.as_ref().unwrap().height, Some(40.0));
     assert_eq!(reference.linked_properties.get("fill").map(String::as_str), Some("#ffffff"));
-    fs::remove_dir_all(dir).unwrap();
+    cleanup_temp_dir(dir);
 }
 
 #[test]
