@@ -23,7 +23,7 @@ fn direct_srng_document_renders_without_svg_conversion() {
     let source = r#"
 srng 0.1;
 file "direct";
-canvas root { size: 96px 64px; }
+canvas root { position: 0px 0px; size: 96px 64px; }
 rect panel { position: 8px 8px; size: 80px 48px; fill: #4f7cff; }
 relation root -> panel { kind: contains; }
 "#;
@@ -40,7 +40,7 @@ relation root -> panel { kind: contains; }
 fn malformed_srng_returns_diagnostics_instead_of_panicking() {
     let source = r#"
 srng 0.1;
-canvas root { size: 64px 64px; }
+canvas root { position: 0px 0px; size: 64px 64px; }
 rect broken {
     position: nope;
     size: 20px;
@@ -58,7 +58,7 @@ fn repeated_native_renders_are_deterministic() {
     let source = r#"
 srng 0.1;
 file "repeat";
-canvas root { size: 128px 96px; }
+canvas root { position: 0px 0px; size: 128px 96px; }
 rect a { position: 4px 4px; size: 120px 88px; fill: #10141f; }
 rect b { position: 24px 20px; size: 80px 56px; fill: #8fb3ff; }
 relation root -> a { kind: contains; }
@@ -87,7 +87,7 @@ fn deep_relationship_chain_stays_renderable() {
     let source = r#"
 srng 0.1;
 file "deep";
-canvas root { size: 256px 256px; }
+canvas root { position: 0px 0px; size: 256px 256px; }
 rect a { position: 8px 8px; size: 240px 240px; fill: #10141f; }
 rect b { position: 16px 16px; size: 224px 224px; fill: #1f2a44; }
 rect c { position: 24px 24px; size: 208px 208px; fill: #2f3a54; }
@@ -110,7 +110,7 @@ relation d -> e { kind: contains; }
 
 #[test]
 fn hundred_node_scene_renders_without_unbounded_output() {
-    let mut source = String::from("srng 0.1;\nfile \"large\";\ncanvas root { size: 512px 512px; }\n");
+    let mut source = String::from("srng 0.1;\nfile \"large\";\ncanvas root { position: 0px 0px; size: 512px 512px; }\n");
     for index in 0..100 {
         let x = (index % 10) * 48 + 4;
         let y = (index / 10) * 48 + 4;
