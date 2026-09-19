@@ -6,13 +6,15 @@ BIN_DIR="${HOME}/.local/bin"
 DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
 APP_DIR="${DATA_HOME}/applications"
 MIME_DIR="${DATA_HOME}/mime/packages"
-ICON_DIR="${DATA_HOME}/icons/hicolor/scalable/apps"
+APP_ICON_DIR="${DATA_HOME}/icons/hicolor/scalable/apps"
+MIME_ICON_DIR="${DATA_HOME}/icons/hicolor/scalable/mimetypes"
 
 for required in \
   "$ROOT/bin/srng-studio" \
   "$ROOT/share/applications/srng-studio.desktop" \
   "$ROOT/share/mime/packages/srng.xml" \
-  "$ROOT/share/icons/hicolor/scalable/apps/srng-studio.svg"
+  "$ROOT/share/icons/hicolor/scalable/apps/srng-studio.svg" \
+  "$ROOT/share/icons/hicolor/scalable/mimetypes/application-x-srng.svg"
 do
   if [[ ! -f "$required" ]]; then
     printf 'SRNG Studio bundle is incomplete: missing %s\n' "$required" >&2
@@ -20,11 +22,12 @@ do
   fi
 done
 
-mkdir -p "$BIN_DIR" "$APP_DIR" "$MIME_DIR" "$ICON_DIR"
+mkdir -p "$BIN_DIR" "$APP_DIR" "$MIME_DIR" "$APP_ICON_DIR" "$MIME_ICON_DIR"
 install -m755 "$ROOT/bin/srng-studio" "$BIN_DIR/srng-studio"
 install -m644 "$ROOT/share/applications/srng-studio.desktop" "$APP_DIR/srng-studio.desktop"
 install -m644 "$ROOT/share/mime/packages/srng.xml" "$MIME_DIR/srng.xml"
-install -m644 "$ROOT/share/icons/hicolor/scalable/apps/srng-studio.svg" "$ICON_DIR/srng-studio.svg"
+install -m644 "$ROOT/share/icons/hicolor/scalable/apps/srng-studio.svg" "$APP_ICON_DIR/srng-studio.svg"
+install -m644 "$ROOT/share/icons/hicolor/scalable/mimetypes/application-x-srng.svg" "$MIME_ICON_DIR/application-x-srng.svg"
 
 if command -v update-mime-database >/dev/null 2>&1; then
   update-mime-database "${DATA_HOME}/mime"
