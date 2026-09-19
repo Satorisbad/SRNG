@@ -10,6 +10,14 @@ The file dialog and drag/drop surface both formats. A loaded `.srng` can be save
 
 The native preview provides fit/reset plus bounded zoom controls and two-axis scrolling for panning large/zoomed documents. Diagnostics remain visible independently of the editable source panel.
 
+## Memory and render safety
+
+Studio rejects source payloads above 32 MiB before conversion/render work and rejects raster targets above an 8192 px side or 16,777,216 total pixels before the renderer allocates the output surface. Oversized documents receive bounded `UI300`/`UI301` diagnostics instead of attempting unbounded desktop allocations.
+
+SVG comparison previews are independently downscaled to a maximum 1600 px side. Repeated-render tests verify deterministic output, and the torture suite exercises large scene graphs and malformed inputs.
+
+These limits are Studio product guardrails; they do not redefine SRNG source semantics.
+
 ## Linux desktop integration
 
 `packaging/linux/srng.xml` registers `application/x-srng` for `*.srng`.
@@ -24,7 +32,7 @@ CI also produces a self-contained Linux ARM64 release archive containing the exe
 
 `packaging/macos/Info.plist` declares the SRNG document UTI (`dev.srng.graphics`), `.srng` filename extension, `application/x-srng` MIME type, bundle identity, and native application icon.
 
-`packaging/macos/package-app.sh` creates a reproducible unsigned `SRNG Studio.app` bundle. CI packages that application as a macOS ARM64 ZIP. Signing and notarization are deliberately separate because they require release credentials.
+`packaging/macos/package-app.sh` creates a scripted unsigned `SRNG Studio.app` bundle. CI packages that application as a macOS ARM64 ZIP. Signing and notarization are deliberately separate because they require release credentials.
 
 ## Tooling
 
@@ -42,9 +50,9 @@ The v1 compatibility boundary is frozen in `docs/V1_RELEASE_CONTRACT.md`; detail
 
 ## Torture and resilience testing
 
-The productization integration suite directly tests native SRNG rendering, malformed source recovery, repeated deterministic renders, deep relationship chains, a 100-node scene, complex SVG resource chains, and corrupt embedded image input.
+The productization integration suite directly tests native SRNG rendering, malformed source recovery, repeated deterministic renders, deep relationship chains, a 100-node scene, complex SVG resource chains, corrupt embedded image input, and the Studio raster safety budget.
 
-The persistent `tests/torture/` corpus adds malformed SRNG, deep relationships, chained clip/mask/filter/reference SVG, Unicode text across multiple scripts, corrupt image data, and cyclic `<use>` references.
+The persistent `tests/torture/` corpus adds malformed SRNG, deep relationships, chained clip/mask/filter/reference SVG, Unicode text across multiple scripts, corrupt image data, and cyclic `<use>` references. Studio CI actively executes every fixture in that corpus and enforces bounded diagnostic counts.
 
 Failures are expected to produce bounded diagnostics rather than panic, hang, or silently corrupt unrelated rendering. Existing renderer revision gating remains the cancellation/stale-revision mechanism.
 
@@ -68,4 +76,4 @@ The following checks inherently require a real target desktop or private release
 1. Omarchy/Hyprland launch and file-manager `.srng` double-click behavior.
 2. Actual desktop MIME/icon presentation after installation.
 3. Sustained interactive memory/thermal behavior on the target M2 8 GB machine.
-4. macOS signing/notarization and Gatekeeper validation when release credentials exist.
+4. macOS LaunchServices document-open behavior, signing/notarization, and Gatekeeper validation on a real Mac with release credentials where required.
