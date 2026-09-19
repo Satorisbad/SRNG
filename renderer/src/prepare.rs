@@ -1,3 +1,4 @@
+use crate::filter::{parse_filter_graph, FilterGraph, FilterRegion};
 use crate::model::*;
 use srng::runtime::{Geometry, Scene};
 use std::borrow::Cow;
@@ -68,11 +69,16 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
             if legacy_mask.is_some() { diagnostics.push(diag("warning", "G224", "mask is using legacy SVG compatibility data; reimport to native v0.5 resources".to_string(), id)); }
         }
 
-        let filters = match parse_filters(&props) {
-            Ok(filters) => filters,
-            Err(message) => { diagnostics.push(diag("error", "G240", message, id)); Vec::new() }
+        let filter_graph = match parse_filters(&props, &geometry, width, height) {
+            Ok(Some((graph, mut filter_diags))) => {
+                for diagnostic in &mut filter_diags { if diagnostic.declaration.is_none() { diagnostic.declaration = Some(id.to_string()); } }
+                diagnostics.extend(filter_diags);
+                Some(graph)
+            }
+            Ok(None) => None,
+            Err(message) => { diagnostics.push(diag("error", "G240", message, id)); None }
         };
-        if !filters.is_empty() { commands.push(Command::PushFilter { filters: filters.clone() }); }
+        if let Some(graph) = filter_graph.as_ref() { commands.push(Command::PushFilter { graph: graph.clone() }); }
 
         if let Some(image) = image {
             commands.push(Command::DrawImage { image });
@@ -102,7 +108,7 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
             }
         }
 
-        if !filters.is_empty() { commands.push(Command::PopFilter); }
+        if filter_graph.is_some() { commands.push(Command::PopFilter); }
         if native_mask.is_some() { commands.push(Command::PopMask); }
         if legacy_mask.is_some() { diagnostics.push(diag("error", "G225", "legacy SVG masks are no longer executable in the native v0.5 command model".to_string(), id)); }
         if clip_id.is_some() { commands.push(Command::PopClip); }
@@ -129,20 +135,19 @@ fn embedded_image(props:&BTreeMap<String,String>, geometry:&Geometry)->Option<Em
     Some(EmbeddedImage{href,x,y,width,height,preserve_aspect_ratio:props.get("image-preserve-aspect-ratio").map(|v|unquote(v)).unwrap_or_else(||"xMidYMid meet".into())})
 }
 
-fn parse_filters(props:&BTreeMap<String,String>)->Result<Vec<FilterOp>,String>{
-    let Some(raw)=props.get("filter-chain").map(|v|unquote(v)) else{return Ok(Vec::new())};
-    let mut out=Vec::new();
-    for part in raw.split(';').map(str::trim).filter(|v|!v.is_empty()){
-        if let Some(inner)=part.strip_prefix("blur(").and_then(|v|v.strip_suffix(')')){
-            let vals=inner.split_whitespace().filter_map(|v|v.parse::<f64>().ok()).collect::<Vec<_>>();
-            let sx=*vals.first().ok_or_else(||"blur() requires sigma".to_string())?;let sy=*vals.get(1).unwrap_or(&sx);
-            if sx<0.0||sy<0.0||!sx.is_finite()||!sy.is_finite(){return Err("blur sigma must be finite and non-negative".into());}
-            out.push(FilterOp::GaussianBlur{sigma_x:sx,sigma_y:sy});
-        }else if let Some(inner)=part.strip_prefix("offset(").and_then(|v|v.strip_suffix(')')){
-            let vals=inner.split_whitespace().filter_map(|v|v.parse::<f64>().ok()).collect::<Vec<_>>();if vals.len()!=2{return Err("offset() requires dx dy".into());}out.push(FilterOp::Offset{dx:vals[0],dy:vals[1]});
-        }else{return Err(format!("unsupported native filter operation `{part}`"));}
-    }
-    Ok(out)
+fn parse_filters(props:&BTreeMap<String,String>, geometry:&Geometry, viewport_width:u16, viewport_height:u16)->Result<Option<(FilterGraph,Vec<RenderDiagnostic>)>,String>{
+    let Some(raw)=props.get("filter-graph").or_else(||props.get("filter-chain")).map(|v|unquote(v)) else{return Ok(None)};
+    let region=filter_region(props,geometry,viewport_width,viewport_height);
+    parse_filter_graph(&raw,region).map(Some)
+}
+
+fn filter_region(props:&BTreeMap<String,String>,geometry:&Geometry,viewport_width:u16,viewport_height:u16)->FilterRegion{
+    let x=geometry.x.unwrap_or(0.0);let y=geometry.y.unwrap_or(0.0);let w=geometry.width.unwrap_or(f64::from(viewport_width));let h=geometry.height.unwrap_or(f64::from(viewport_height));
+    let units=props.get("filter-units").map(|v|unquote(v)).unwrap_or_else(||"objectBoundingBox".into());
+    let resolve=|key:&str,default:f64,origin:f64,extent:f64|->f64{let Some(raw)=props.get(key).map(|v|unquote(v))else{return default};let raw=raw.trim();if let Some(p)=raw.strip_suffix('%').and_then(|v|v.parse::<f64>().ok()){if units=="objectBoundingBox"{origin+extent*p/100.0}else{p/100.0}}else{let n=raw.trim_end_matches("px").parse::<f64>().unwrap_or(default);if units=="objectBoundingBox"{origin+extent*n}else{n}}};
+    let rx=resolve("filter-x",x-w*0.1,x,w);let ry=resolve("filter-y",y-h*0.1,y,h);
+    let rw=resolve("filter-width",w*1.2,0.0,w).max(0.0);let rh=resolve("filter-height",h*1.2,0.0,h).max(0.0);
+    FilterRegion{x:rx,y:ry,width:rw,height:rh}
 }
 
 fn path_for(kind: &str, geometry: &Geometry, props: &BTreeMap<String, String>) -> Option<PathData> {
@@ -162,19 +167,18 @@ fn xml_escape_attr(value:&str)->String{value.replace('&',"&amp;").replace('<',"&
 
 fn parse_paint(value:&str,props:&BTreeMap<String,String>,geometry:&Geometry)->Result<Paint,String>{
     let value=value.trim();let spread=gradient_spread(props);
-    if value=="linear-gradient"||value.starts_with("linear-gradient("){let stops_text=props.get("gradient-stops").ok_or_else(||"linear gradient requires `gradient-stops`".to_string())?;let stops=parse_gradient_stops(stops_text)?;if stops.len()<2{return Err("linear gradient requires at least two stops".into());}let x=geometry.x.unwrap_or(0.0);let y=geometry.y.unwrap_or(0.0);let width=geometry.width.unwrap_or(1.0);let height=geometry.height.unwrap_or(0.0);let start=props.get("gradient-start").and_then(|v|parse_pair(v)).unwrap_or((x,y));let end=props.get("gradient-end").and_then(|v|parse_pair(v)).unwrap_or((x+width,y+height));return Ok(Paint::LinearGradient{start,end,stops,spread});}
-    if value=="radial-gradient"||value.starts_with("radial-gradient("){let stops_text=props.get("gradient-stops").ok_or_else(||"radial gradient requires `gradient-stops`".to_string())?;let stops=parse_gradient_stops(stops_text)?;if stops.len()<2{return Err("radial gradient requires at least two stops".into());}let x=geometry.x.unwrap_or(0.0);let y=geometry.y.unwrap_or(0.0);let width=geometry.width.unwrap_or(1.0).abs();let height=geometry.height.unwrap_or(1.0).abs();let cx=props.get("gradient-cx").and_then(|v|parse_number(v)).unwrap_or(x+width/2.0);let cy=props.get("gradient-cy").and_then(|v|parse_number(v)).unwrap_or(y+height/2.0);let fx=props.get("gradient-fx").and_then(|v|parse_number(v)).unwrap_or(cx);let fy=props.get("gradient-fy").and_then(|v|parse_number(v)).unwrap_or(cy);let radius=props.get("gradient-r").and_then(|v|parse_number(v)).unwrap_or(width.max(height)/2.0);let focal_radius=props.get("gradient-fr").and_then(|v|parse_number(v)).unwrap_or(0.0).max(0.0);if !radius.is_finite()||radius<=0.0{return Err("radial gradient radius must be a positive finite number".into());}return Ok(Paint::RadialGradient{center:(cx,cy),focal:(fx,fy),focal_radius,radius,stops,spread});}
+    if value=="linear-gradient"||value.starts_with("linear-gradient("){let stops_text=props.get("gradient-stops").ok_or_else(||"linear gradient requires `gradient-stops`".to_string())?;let stops=parse_gradient_stops(stops_text)?;if stops.len()<2{return Err("linear gradient requires at least two stops".to_string());}let x=geometry.x.unwrap_or(0.0);let y=geometry.y.unwrap_or(0.0);let width=geometry.width.unwrap_or(1.0);let height=geometry.height.unwrap_or(0.0);let start=props.get("gradient-start").and_then(|value|parse_pair(value)).unwrap_or((x,y));let end=props.get("gradient-end").and_then(|value|parse_pair(value)).unwrap_or((x+width,y+height));return Ok(Paint::LinearGradient{start,end,stops,spread});}
+    if value=="radial-gradient"||value.starts_with("radial-gradient("){let stops_text=props.get("gradient-stops").ok_or_else(||"radial gradient requires `gradient-stops`".to_string())?;let stops=parse_gradient_stops(stops_text)?;if stops.len()<2{return Err("radial gradient requires at least two stops".into());}let x=geometry.x.unwrap_or(0.0);let y=geometry.y.unwrap_or(0.0);let w=geometry.width.unwrap_or(1.0).abs();let h=geometry.height.unwrap_or(1.0).abs();let cx=props.get("gradient-cx").and_then(|v|parse_number(v)).unwrap_or(x+w/2.0);let cy=props.get("gradient-cy").and_then(|v|parse_number(v)).unwrap_or(y+h/2.0);let fx=props.get("gradient-fx").and_then(|v|parse_number(v)).unwrap_or(cx);let fy=props.get("gradient-fy").and_then(|v|parse_number(v)).unwrap_or(cy);let radius=props.get("gradient-r").and_then(|v|parse_number(v)).unwrap_or(w.max(h)/2.0).abs();let focal_radius=props.get("gradient-fr").and_then(|v|parse_number(v)).unwrap_or(0.0).abs();if radius<=0.0{return Err("radial gradient radius must be positive".into());}return Ok(Paint::RadialGradient{center:(cx,cy),focal:(fx,fy),focal_radius:focal_radius.min(radius),radius,stops,spread});}
     parse_color(value).map(Paint::Solid)
 }
 fn gradient_spread(props:&BTreeMap<String,String>)->GradientSpread{match props.get("gradient-spread").map(|v|unquote(v)).as_deref(){Some("repeat")=>GradientSpread::Repeat,Some("reflect")=>GradientSpread::Reflect,_=>GradientSpread::Pad}}
-fn parse_gradient_stops(value:&str)->Result<Vec<GradientStop>,String>{value.split(',').map(|part|{let fields=part.split_whitespace().collect::<Vec<_>>();if fields.len()<2{return Err("gradient stop requires offset and color".into());}let(offset_text,color_text,percent)=if fields.len()>=3&&fields[1]=="%"{(fields[0],fields[2],true)}else if let Some(offset)=fields[0].strip_suffix('%'){(offset,fields[1],true)}else{(fields[0],fields[1],false)};let mut offset=offset_text.parse::<f32>().map_err(|_|"invalid gradient stop offset".to_string())?;if percent{offset/=100.0;}if !(0.0..=1.0).contains(&offset){return Err("gradient stop offset must be in 0..=1".into());}Ok(GradientStop{offset,color:parse_color(color_text)?})}).collect()}
-fn parse_color(value:&str)->Result<Rgba,String>{let value=unquote(value);let hex=value.strip_prefix('#').ok_or_else(||format!("unsupported paint `{value}`; use hexadecimal colors"))?;fn byte(v:&str)->Result<u8,String>{u8::from_str_radix(v,16).map_err(|_|"invalid hexadecimal color".into())}match hex.len(){3=>Ok(Rgba{r:byte(&hex[0..1].repeat(2))?,g:byte(&hex[1..2].repeat(2))?,b:byte(&hex[2..3].repeat(2))?,a:255}),4=>Ok(Rgba{r:byte(&hex[0..1].repeat(2))?,g:byte(&hex[1..2].repeat(2))?,b:byte(&hex[2..3].repeat(2))?,a:byte(&hex[3..4].repeat(2))?}),6=>Ok(Rgba{r:byte(&hex[0..2])?,g:byte(&hex[2..4])?,b:byte(&hex[4..6])?,a:255}),8=>Ok(Rgba{r:byte(&hex[0..2])?,g:byte(&hex[2..4])?,b:byte(&hex[4..6])?,a:byte(&hex[6..8])?}),_=>Err("invalid hexadecimal color length".into())}}
-fn fill_rule(props:&BTreeMap<String,String>)->FillRule{match props.get("fill-rule").map(|v|unquote(v)).as_deref(){Some("evenodd")|Some("even-odd")=>FillRule::EvenOdd,_=>FillRule::NonZero}}
-fn stroke_style(props:&BTreeMap<String,String>)->StrokeStyle{let mut s=StrokeStyle::default();if let Some(v)=props.get("stroke-width").and_then(|v|parse_number(v)){s.width=v.max(0.0);}if let Some(v)=props.get("stroke-miterlimit").and_then(|v|parse_number(v)){s.miter_limit=v.max(0.0);}if let Some(v)=props.get("stroke-dashoffset").and_then(|v|parse_number(v)){s.dash_offset=v;}if let Some(v)=props.get("stroke-dasharray"){s.dash=v.split(|c:char|c==','||c.is_whitespace()).filter_map(parse_number).filter(|v|*v>=0.0).collect();}s.line_cap=match props.get("stroke-linecap").map(|v|unquote(v)).as_deref(){Some("round")=>LineCap::Round,Some("square")=>LineCap::Square,_=>LineCap::Butt};s.line_join=match props.get("stroke-linejoin").map(|v|unquote(v)).as_deref(){Some("round")=>LineJoin::Round,Some("bevel")=>LineJoin::Bevel,_=>LineJoin::Miter};s}
-fn parse_pair(value:&str)->Option<(f64,f64)>{let mut values=value.split_whitespace().filter_map(parse_number);Some((values.next()?,values.next()?))}
-fn parse_number(value:&str)->Option<f64>{let value=unquote(value);let trimmed=value.trim();trimmed.strip_suffix("px").map(str::trim).unwrap_or(trimmed).parse().ok()}
-fn unquote(value:&str)->String{let trimmed=value.trim();let Some(inner)=trimmed.strip_prefix('"').and_then(|v|v.strip_suffix('"'))else{return trimmed.to_string()};unescape_string(inner)}
-fn unescape_string(value:&str)->String{let mut out=String::with_capacity(value.len());let mut chars=value.chars();while let Some(ch)=chars.next(){if ch!='\\'{out.push(ch);continue;}match chars.next(){Some('\\')=>out.push('\\'),Some('"')=>out.push('"'),Some('n')=>out.push('\n'),Some('r')=>out.push('\r'),Some('t')=>out.push('\t'),Some(other)=>{out.push('\\');out.push(other)},None=>out.push('\\')}}out}
+fn parse_gradient_stops(value:&str)->Result<Vec<GradientStop>,String>{let value=unquote(value);value.split(',').map(|part|{let mut fields=part.split_whitespace();let offset=fields.next().ok_or_else(||"gradient stop is missing offset".to_string())?;let color=fields.next().ok_or_else(||"gradient stop is missing color".to_string())?;let offset=if let Some(v)=offset.strip_suffix('%'){v.parse::<f32>().map_err(|_|"invalid gradient stop offset".to_string())?/100.0}else{offset.parse::<f32>().map_err(|_|"invalid gradient stop offset".to_string())?};if !(0.0..=1.0).contains(&offset){return Err("gradient stop offset must be in 0..=1".into());}Ok(GradientStop{offset,color:parse_color(color)?})}).collect()}
+fn parse_color(value:&str)->Result<Rgba,String>{let value=unquote(value);let hex=value.strip_prefix('#').ok_or_else(||format!("unsupported paint `{value}`; use hexadecimal colors"))?;fn byte(value:&str)->Result<u8,String>{u8::from_str_radix(value,16).map_err(|_|"invalid hexadecimal color".into())}match hex.len(){3=>Ok(Rgba{r:byte(&hex[0..1].repeat(2))?,g:byte(&hex[1..2].repeat(2))?,b:byte(&hex[2..3].repeat(2))?,a:255}),4=>Ok(Rgba{r:byte(&hex[0..1].repeat(2))?,g:byte(&hex[1..2].repeat(2))?,b:byte(&hex[2..3].repeat(2))?,a:byte(&hex[3..4].repeat(2))?}),6=>Ok(Rgba{r:byte(&hex[0..2])?,g:byte(&hex[2..4])?,b:byte(&hex[4..6])?,a:255}),8=>Ok(Rgba{r:byte(&hex[0..2])?,g:byte(&hex[2..4])?,b:byte(&hex[4..6])?,a:byte(&hex[6..8])?}),_=>Err("invalid hexadecimal color length".into())}}
+fn fill_rule(props:&BTreeMap<String,String>)->FillRule{match props.get("fill-rule").map(|value|unquote(value)).as_deref(){Some("evenodd")|Some("even-odd")=>FillRule::EvenOdd,_=>FillRule::NonZero}}
+fn stroke_style(props:&BTreeMap<String,String>)->StrokeStyle{let mut style=StrokeStyle::default();if let Some(value)=props.get("stroke-width").and_then(|value|parse_number(value)){style.width=value.max(0.0);}if let Some(value)=props.get("stroke-miterlimit").and_then(|value|parse_number(value)){style.miter_limit=value.max(0.0);}if let Some(value)=props.get("stroke-dashoffset").and_then(|value|parse_number(value)){style.dash_offset=value;}if let Some(value)=props.get("stroke-dasharray"){style.dash=value.split(|character:char|character==','||character.is_whitespace()).filter_map(parse_number).filter(|value|*value>=0.0).collect();}style.line_cap=match props.get("stroke-linecap").map(|value|unquote(value)).as_deref(){Some("round")=>LineCap::Round,Some("square")=>LineCap::Square,_=>LineCap::Butt};style.line_join=match props.get("stroke-linejoin").map(|value|unquote(value)).as_deref(){Some("round")=>LineJoin::Round,Some("bevel")=>LineJoin::Bevel,_=>LineJoin::Miter};style}
+fn parse_pair(value:&str)->Option<(f64,f64)>{let mut values=unquote(value).split_whitespace().filter_map(parse_number).collect::<Vec<_>>().into_iter();Some((values.next()?,values.next()?))}
+fn parse_number(value:&str)->Option<f64>{value.trim().trim_matches('"').trim_end_matches("px").parse().ok()}
+fn unquote(value:&str)->String{let value=value.trim();let Some(inner)=value.strip_prefix('"').and_then(|v|v.strip_suffix('"'))else{return value.to_string()};inner.replace("\\n","\n").replace("\\\"","\"").replace("\\\\","\\")}
 fn is_none_paint(value:&str)->bool{unquote(value).eq_ignore_ascii_case("none")}
 fn clamp_dimension(value:f64)->u16{value.round().clamp(1.0,u16::MAX as f64)as u16}
 fn diag(severity:&str,code:&str,message:String,id:&str)->RenderDiagnostic{RenderDiagnostic{severity:severity.into(),code:code.into(),message,declaration:Some(id.into())}}

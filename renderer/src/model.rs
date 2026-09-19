@@ -15,7 +15,7 @@ pub enum Command {
     PopClip,
     PushMask { records: Vec<VectorRecord> },
     PopMask,
-    PushFilter { filters: Vec<FilterOp> },
+    PushFilter { graph: crate::filter::FilterGraph },
     PopFilter,
     DrawImage { image: EmbeddedImage },
     Fill { path: PathData, paint: Paint, rule: FillRule },
@@ -30,12 +30,6 @@ pub struct EmbeddedImage {
     pub width: f64,
     pub height: f64,
     pub preserve_aspect_ratio: String,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum FilterOp {
-    GaussianBlur { sigma_x: f64, sigma_y: f64 },
-    Offset { dx: f64, dy: f64 },
 }
 
 #[derive(Debug, Clone, PartialEq)]

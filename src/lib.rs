@@ -3,13 +3,20 @@ pub mod diagnostic;
 pub mod ir;
 pub mod lexer;
 pub mod parser;
+pub mod text_shaping;
 #[path = "svg_import.rs"]
 mod svg_import_impl;
 #[path = "svg.rs"]
 mod svg_base;
+#[path = "resource_reference.rs"]
+mod resource_reference;
 #[path = "svg_v4.rs"]
 mod svg_v4;
 #[path = "svg_final.rs"]
+mod svg_final;
+#[path = "svg_filter_v06.rs"]
+mod svg_filter_v06;
+#[path = "svg_integrated.rs"]
 pub mod svg;
 #[path = "runtime_v2.rs"]
 pub mod runtime;

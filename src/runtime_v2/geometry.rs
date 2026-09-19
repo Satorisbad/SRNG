@@ -72,6 +72,7 @@ fn build_node(
     let id = string_field(declaration, "id")?.to_string();
     let kind = string_field(declaration, "kind").unwrap_or("unknown").to_string();
     let props = properties(declaration);
+    let resource_only = props.get("resource-only").is_some_and(|value| unquote(value) == "true");
     let mut geometry = Geometry::default();
     let mut active = true;
 
@@ -133,6 +134,10 @@ fn build_node(
         }
     }
 
+    if resource_only && active {
+        active = false;
+    }
+
     Some(SceneNode {
         id,
         kind,
@@ -158,6 +163,7 @@ fn build_reference(
     let source_file = string_field(declaration, "source_file").unwrap_or(fallback_source);
     let target_id = string_field(declaration, "target_id").unwrap_or(fallback_id);
     let props = properties(declaration);
+    let resource_only = props.get("resource-only").is_some_and(|value| unquote(value) == "true");
     let mut geometry = Geometry::default();
     let mut geometry_valid = true;
 
@@ -214,12 +220,13 @@ fn build_reference(
         target_id: target_id.to_string(),
         provenance: target.to_string(),
         resolved: false,
-        active: geometry_valid,
+        active: geometry_valid && !resource_only,
         resolved_kind: None,
         properties: props,
         geometry,
         linked_geometry: None,
         linked_properties: BTreeMap::new(),
+        resolved_nodes: Vec::new(),
         paint_order,
     })
 }

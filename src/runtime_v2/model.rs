@@ -111,6 +111,18 @@ pub struct SceneRelation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ResolvedResourceNode {
+    pub id: String,
+    pub source_id: String,
+    pub kind: String,
+    pub source: String,
+    pub properties: BTreeMap<String, String>,
+    pub geometry: Geometry,
+    pub parent_source_id: Option<String>,
+    pub paint_order: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SceneReference {
     pub id: String,
     pub source_file: String,
@@ -124,6 +136,8 @@ pub struct SceneReference {
     pub linked_geometry: Option<Geometry>,
     #[serde(default)]
     pub linked_properties: BTreeMap<String, String>,
+    #[serde(default)]
+    pub resolved_nodes: Vec<ResolvedResourceNode>,
     pub paint_order: usize,
 }
 
@@ -179,6 +193,7 @@ struct ResolvedTarget {
     kind: String,
     geometry: Geometry,
     properties: BTreeMap<String, String>,
+    nodes: Vec<ResolvedResourceNode>,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
