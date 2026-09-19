@@ -8,6 +8,6 @@ fn pattern_dimensions_survive_import_and_runtime() {
     let ir = srng::compile_to_json(&imported.source, "pattern.srng");
     let scene = execute_json(&ir, &RuntimeOptions::default()).expect("runtime should accept integrated pattern source");
     let target = scene.nodes.iter().find(|node| node.id == "target").expect("target node");
-    assert_eq!(target.properties.get("pattern-width").map(String::as_str), Some("4px"), "source:\n{}\nprops:{:?}", imported.source, target.properties);
-    assert_eq!(target.properties.get("pattern-height").map(String::as_str), Some("5px"), "source:\n{}\nprops:{:?}", imported.source, target.properties);
+    assert_eq!(target.properties.get("pattern-width").map(String::as_str), Some("4"), "source:\n{}\nprops:{:?}", imported.source, target.properties);
+    assert_eq!(target.properties.get("pattern-height").map(String::as_str), Some("5"), "source:\n{}\nprops:{:?}", imported.source, target.properties);
 }
