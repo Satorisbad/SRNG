@@ -2,7 +2,7 @@ name: Studio
 
 on:
   push:
-    branches: [svg-studio-v0.1]
+    branches: [svg-studio-v0.1, productization-v0.7]
   pull_request:
 
 concurrency:
@@ -15,12 +15,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-24.04-arm
+            artifact: srng-studio-linux-aarch64
+          - os: macos-14
+            artifact: srng-studio-macos-aarch64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Check native app
-        run: cargo check --manifest-path studio/Cargo.toml
-      - name: Test conversion and render pipeline
-        run: cargo test --manifest-path studio/Cargo.toml
+      - name: Check workspace
+        run: cargo check --workspace
+      - name: Test workspace
+        run: cargo test --workspace
+      - name: Build Studio release
+        run: cargo build --release --manifest-path studio/Cargo.toml
+      - name: Verify release binary
+        run: test -x studio/target/release/srng-studio
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: studio/target/release/srng-studio
+          if-no-files-found: error
