@@ -1,5 +1,5 @@
 use srng::runtime::{execute_json, RuntimeOptions};
-use srng_renderer::{prepare_scene, Command, FilterOp, GradientSpread, Paint, RevisionGate};
+use srng_renderer::{prepare_scene, Command, FilterOp, GradientSpread, ImageCodec, Paint, RevisionGate};
 
 fn scene(source: &str) -> srng::runtime::Scene {
     let ir = srng::compile_to_json(source, "native-svg-v05.srng");
@@ -82,18 +82,52 @@ rect filtered {
 }
 
 #[test]
-fn embedded_data_image_lowers_to_image_command() {
+fn png_data_image_decodes_to_native_resource() {
     let source = r#"
 srng 0.1;
 group image {
     position: 2px 3px;
     size: 8px 9px;
-    image-data: "data:image/png;base64,iVBORw0KGgo=";
+    image-data: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lC9pWQAAAABJRU5ErkJggg==";
     image-preserve-aspect-ratio: "xMidYMid meet";
 }
 "#;
     let gate = RevisionGate::default();
     let revision = gate.begin();
     let prepared = prepare_scene(&scene(source), revision, &gate);
-    assert!(prepared.commands.iter().any(|command| matches!(command, Command::DrawImage { image } if image.width == 8.0 && image.height == 9.0)));
+    assert!(prepared.commands.iter().any(|command| matches!(command, Command::DrawImage { image } if image.codec == ImageCodec::Png && image.intrinsic_width == 1 && image.intrinsic_height == 1 && image.pixels.len() == 4 && image.width == 8.0 && image.height == 9.0)));
+    assert!(!prepared.diagnostics.iter().any(|d| d.code == "G260"), "{:?}", prepared.diagnostics);
+}
+
+#[test]
+fn mime_mismatch_reports_image_diagnostic() {
+    let source = r#"
+srng 0.1;
+group image {
+    position: 0px 0px;
+    size: 8px 8px;
+    image-data: "data:image/png;base64,R0lGODlh";
+}
+"#;
+    let gate = RevisionGate::default();
+    let revision = gate.begin();
+    let prepared = prepare_scene(&scene(source), revision, &gate);
+    assert!(prepared.diagnostics.iter().any(|d| d.code == "G260"));
+    assert!(!prepared.commands.iter().any(|command| matches!(command, Command::DrawImage { .. })));
+}
+
+#[test]
+fn external_image_url_is_rejected() {
+    let source = r#"
+srng 0.1;
+group image {
+    position: 0px 0px;
+    size: 8px 8px;
+    href: "https://example.invalid/image.png";
+}
+"#;
+    let gate = RevisionGate::default();
+    let revision = gate.begin();
+    let prepared = prepare_scene(&scene(source), revision, &gate);
+    assert!(prepared.diagnostics.iter().any(|d| d.code == "G260" && d.message.contains("disabled")));
 }

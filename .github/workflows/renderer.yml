@@ -2,7 +2,7 @@ name: Renderer
 
 on:
   push:
-    branches: [renderer-v0.1, svg-fidelity-complete-v0.5]
+    branches: [renderer-v0.1, svg-fidelity-complete-v0.5, image-pipeline-v0.6]
   pull_request:
 
 concurrency:
