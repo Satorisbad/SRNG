@@ -44,8 +44,12 @@ fn normalize_integrated_resources(svg: &str, source: &mut String) {
             if let Some(pattern_id) = property_value(&block, "pattern-ref").or_else(|| property_value(&block, "svg-pattern-ref")) {
                 let id = pattern_id.trim_matches('"').trim().trim_start_matches("url(#").trim_end_matches(')');
                 if let Some((width, height)) = patterns.get(id) {
-                    set_property(&mut block, "pattern-width", &format!("{width}px"));
-                    set_property(&mut block, "pattern-height", &format!("{height}px"));
+                    let width = format!("{width}px");
+                    let height = format!("{height}px");
+                    set_property(&mut block, "pattern-width", &width);
+                    set_property(&mut block, "pattern-height", &height);
+                    set_property(&mut block, "svg-pattern-width", &width);
+                    set_property(&mut block, "svg-pattern-height", &height);
                 }
             }
 
@@ -145,5 +149,7 @@ mod tests {
         let result = import_svg(svg, "test.svg", &ImportOptions::default());
         assert!(result.source.contains("pattern-width: 4px;"));
         assert!(result.source.contains("pattern-height: 5px;"));
+        assert!(result.source.contains("svg-pattern-width: 4px;"));
+        assert!(result.source.contains("svg-pattern-height: 5px;"));
     }
 }
