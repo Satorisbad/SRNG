@@ -25,23 +25,30 @@ pub fn prepare_scene(scene: &Scene, revision: u64, gate: &RevisionGate) -> Prepa
             continue;
         }
 
+        let authored_position = node.properties.get("position").and_then(|value| parse_pair(value));
+        let authored_size = node.properties.get("size").and_then(|value| parse_pair(value));
+        let x = node.geometry.x.or_else(|| authored_position.map(|pair| pair.0));
+        let y = node.geometry.y.or_else(|| authored_position.map(|pair| pair.1));
+        let width = node.geometry.width.or_else(|| authored_size.map(|pair| pair.0));
+        let height = node.geometry.height.or_else(|| authored_size.map(|pair| pair.1));
+
         if !node.properties.contains_key("source-x") {
-            if let Some(value) = node.geometry.x {
+            if let Some(value) = x {
                 node.properties.insert("source-x".into(), format_number(value));
             }
         }
         if !node.properties.contains_key("source-y") {
-            if let Some(value) = node.geometry.y {
+            if let Some(value) = y {
                 node.properties.insert("source-y".into(), format_number(value));
             }
         }
         if !node.properties.contains_key("source-width") {
-            if let Some(value) = node.geometry.width {
+            if let Some(value) = width {
                 node.properties.insert("source-width".into(), format_number(value));
             }
         }
         if !node.properties.contains_key("source-height") {
-            if let Some(value) = node.geometry.height {
+            if let Some(value) = height {
                 node.properties.insert("source-height".into(), format_number(value));
             }
         }
@@ -57,6 +64,17 @@ fn unquote(value: &str) -> String {
         .and_then(|value| value.strip_suffix('"'))
         .unwrap_or(value)
         .to_string()
+}
+
+fn parse_pair(value: &str) -> Option<(f64, f64)> {
+    let value = unquote(value);
+    let mut values = value
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.trim_end_matches("px").parse::<f64>().ok());
+    let first = values.next()?;
+    let second = values.next()?;
+    Some((first, second))
 }
 
 fn format_number(value: f64) -> String {
