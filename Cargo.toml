@@ -21,6 +21,10 @@ path = "src/bin/srngr.rs"
 name = "srng-svg"
 path = "src/bin/srng-svg.rs"
 
+[[bin]]
+name = "srngfmt"
+path = "src/bin/srngfmt.rs"
+
 [dependencies]
 roxmltree = "0.20"
 serde = { version = "1", features = ["derive"] }

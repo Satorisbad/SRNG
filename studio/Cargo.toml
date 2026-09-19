@@ -3,7 +3,7 @@ name = "srng-studio"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.90"
-description = "Native visual SVG to SRNG conversion and validation studio"
+description = "Native SRNG desktop viewer, editor, renderer, and SVG import studio"
 license = "Apache-2.0"
 
 [dependencies]

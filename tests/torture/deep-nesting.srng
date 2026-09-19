@@ -1,0 +1,25 @@
+srng 0.1;
+file "deep-nesting";
+
+canvas root {
+  size: 1024px 768px;
+}
+
+rect base {
+  position: 0px 0px;
+  size: 1024px 768px;
+  fill: #101010;
+}
+
+rect a { position: 8px 8px; size: 1008px 752px; fill: none; stroke: #ffffff; }
+rect b { position: 16px 16px; size: 992px 736px; fill: none; stroke: #ffffff; }
+rect c { position: 24px 24px; size: 976px 720px; fill: none; stroke: #ffffff; }
+rect d { position: 32px 32px; size: 960px 704px; fill: none; stroke: #ffffff; }
+rect e { position: 40px 40px; size: 944px 688px; fill: none; stroke: #ffffff; }
+
+relation root -> base {}
+relation root -> a {}
+relation a -> b {}
+relation b -> c {}
+relation c -> d {}
+relation d -> e {}

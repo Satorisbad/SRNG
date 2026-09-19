@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=SRNG Studio
+Comment=View, inspect, edit, and render SRNG vector graphics
+Exec=srng-studio %f
+Icon=srng-studio
+Terminal=false
+Categories=Graphics;Viewer;
+MimeType=application/x-srng;image/svg+xml;
+StartupNotify=true
