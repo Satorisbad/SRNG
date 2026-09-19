@@ -2,7 +2,7 @@ name: Renderer
 
 on:
   push:
-    branches: [renderer-v0.1, svg-fidelity-complete-v0.5]
+    branches: [renderer-v0.1, svg-fidelity-complete-v0.5, svg-fidelity-integrated-v0.6]
   pull_request:
 
 concurrency:
@@ -35,6 +35,7 @@ jobs:
       - run: cargo check --manifest-path renderer/Cargo.toml
       - run: cargo test --manifest-path renderer/Cargo.toml
       - run: bash scripts/check-svg-fidelity-v05.sh
+      - run: bash scripts/check-filter-graph-v06.sh
 
   renderer-gpu:
     name: Renderer GPU type-check / ${{ matrix.os }}
