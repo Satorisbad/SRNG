@@ -42,10 +42,10 @@ fn normalize_integrated_resources(svg: &str, source: &mut String) {
             }
 
             if let Some(pattern_id) = property_value(&block, "pattern-ref").or_else(|| property_value(&block, "svg-pattern-ref")) {
-                let id = pattern_id.trim_matches('"');
+                let id = pattern_id.trim_matches('"').trim().trim_start_matches("url(#").trim_end_matches(')');
                 if let Some((width, height)) = patterns.get(id) {
-                    if property_value(&block, "pattern-width").is_none() && property_value(&block, "svg-pattern-width").is_none() { set_property(&mut block, "pattern-width", &format!("{width}px")); }
-                    if property_value(&block, "pattern-height").is_none() && property_value(&block, "svg-pattern-height").is_none() { set_property(&mut block, "pattern-height", &format!("{height}px")); }
+                    set_property(&mut block, "pattern-width", &format!("{width}px"));
+                    set_property(&mut block, "pattern-height", &format!("{height}px"));
                 }
             }
 
