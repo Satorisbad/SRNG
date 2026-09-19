@@ -585,7 +585,7 @@ impl eframe::App for StudioApp {
                 egui::Order::Foreground,
                 egui::Id::new("drop-overlay"),
             ));
-            let rect = ctx.content_rect();
+            let rect = ctx.screen_rect();
             painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(180));
             painter.text(
                 rect.center(),
