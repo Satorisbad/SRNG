@@ -1,676 +1,76 @@
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TextDirection {
-    Ltr,
-    Rtl,
-}
-
+pub enum TextDirection { Ltr, Rtl }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Script {
-    Latin,
-    Arabic,
-    Hebrew,
-    Devanagari,
-    Common,
-    Inherited,
-    Unknown,
-}
+pub enum Script { Latin, Arabic, Hebrew, Devanagari, Common, Inherited, Unknown }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextStyle {
-    pub font_families: Vec<String>,
-    pub font_size: f32,
-    pub font_weight: u16,
-    pub font_style: FontStyle,
-    pub text_anchor: TextAnchor,
-    pub letter_spacing: f32,
-    pub word_spacing: f32,
-    pub line_height: Option<f32>,
-    pub language: Option<String>,
-    pub direction: Option<TextDirection>,
+    pub font_families: Vec<String>, pub font_size: f32, pub font_weight: u16, pub font_style: FontStyle,
+    pub text_anchor: TextAnchor, pub letter_spacing: f32, pub word_spacing: f32, pub line_height: Option<f32>,
+    pub language: Option<String>, pub direction: Option<TextDirection>,
 }
+impl Default for TextStyle { fn default()->Self{Self{font_families:Vec::new(),font_size:16.0,font_weight:400,font_style:FontStyle::Normal,text_anchor:TextAnchor::Start,letter_spacing:0.0,word_spacing:0.0,line_height:None,language:None,direction:None}}}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum FontStyle { Normal, Italic, Oblique }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum TextAnchor { Start, Middle, End }
+#[derive(Debug, Clone, PartialEq, Eq)] pub struct FontRequest { pub families:Vec<String>, pub weight:u16, pub style:FontStyle, pub script:Script, pub language:Option<String> }
+#[derive(Debug, Clone, PartialEq, Eq)] pub struct FontFaceRef { pub id:String, pub family:String }
+#[derive(Debug, Clone, PartialEq, Eq)] pub enum FontProviderError { MissingFont, MissingGlyphData, UnsupportedScript, Backend(String) }
+pub trait FontProvider { fn select_face(&self,request:&FontRequest,text:&str)->Result<FontFaceRef,FontProviderError>; fn shape_run(&self,request:ShapeRunRequest<'_>)->Result<FontShapingResult,FontProviderError>; }
+#[derive(Debug, Clone, Copy)] pub struct ShapeRunRequest<'a>{pub face:&'a FontFaceRef,pub text:&'a str,pub direction:TextDirection,pub script:Script,pub language:Option<&'a str>,pub font_size:f32}
+#[derive(Debug, Clone, PartialEq)] pub struct FontShapingResult{pub glyphs:Vec<FontGlyph>}
+#[derive(Debug, Clone, PartialEq)] pub struct FontGlyph{pub glyph_id:u32,pub cluster:usize,pub advance_x:f32,pub advance_y:f32,pub offset_x:f32,pub offset_y:f32}
+#[derive(Debug, Clone, PartialEq)] pub struct ShapedText{pub source:String,pub runs:Vec<GlyphRun>,pub lines:Vec<ShapedLine>,pub diagnostics:Vec<ShapingDiagnostic>}
+#[derive(Debug, Clone, PartialEq)] pub struct ShapedLine{pub source_range:std::ops::Range<usize>,pub run_range:std::ops::Range<usize>,pub advance_x:f32,pub line_height:f32}
+#[derive(Debug, Clone, PartialEq)] pub struct GlyphRun{pub source_range:std::ops::Range<usize>,pub direction:TextDirection,pub script:Script,pub language:Option<String>,pub face:Option<FontFaceRef>,pub glyphs:Vec<ShapedGlyph>,pub advance_x:f32,pub diagnostics:Vec<ShapingDiagnostic>}
+#[derive(Debug, Clone, PartialEq)] pub struct ShapedGlyph{pub glyph_id:u32,pub cluster:usize,pub source_range:std::ops::Range<usize>,pub advance_x:f32,pub advance_y:f32,pub offset_x:f32,pub offset_y:f32}
+#[derive(Debug, Clone, PartialEq, Eq)] pub struct ShapingDiagnostic{pub code:&'static str,pub message:String,pub source_range:Option<std::ops::Range<usize>>}
 
-impl Default for TextStyle {
-    fn default() -> Self {
-        Self {
-            font_families: Vec::new(),
-            font_size: 16.0,
-            font_weight: 400,
-            font_style: FontStyle::Normal,
-            text_anchor: TextAnchor::Start,
-            letter_spacing: 0.0,
-            word_spacing: 0.0,
-            line_height: None,
-            language: None,
-            direction: None,
-        }
+pub struct TextShaper<'a,P:FontProvider>{provider:&'a P}
+impl<'a,P:FontProvider> TextShaper<'a,P>{
+    pub fn new(provider:&'a P)->Self{Self{provider}}
+    pub fn shape(&self,text:&str,style:&TextStyle)->ShapedText{
+        let(mut runs,mut lines,mut diagnostics)=(Vec::new(),Vec::new(),Vec::new());let(mut line_start,mut run_start)=(0usize,0usize);
+        for segment in text.split_inclusive('\n') { let has_newline=segment.ends_with('\n');let line_text=if has_newline{&segment[..segment.len()-1]}else{segment};let line_end=line_start+line_text.len();let line_runs=self.shape_line(line_text,line_start,style,&mut diagnostics);let mut line_advance=0.0;for run in line_runs{line_advance+=run.advance_x;runs.push(run);}let run_end=runs.len();lines.push(ShapedLine{source_range:line_start..line_end,run_range:run_start..run_end,advance_x:line_advance,line_height:style.line_height.unwrap_or(style.font_size*1.2)});run_start=run_end;line_start=line_end+usize::from(has_newline); }
+        if text.is_empty()||text.ends_with('\n'){lines.push(ShapedLine{source_range:text.len()..text.len(),run_range:runs.len()..runs.len(),advance_x:0.0,line_height:style.line_height.unwrap_or(style.font_size*1.2)});}
+        ShapedText{source:text.to_string(),runs,lines,diagnostics}
+    }
+    fn shape_line(&self,text:&str,global_offset:usize,style:&TextStyle,diagnostics:&mut Vec<ShapingDiagnostic>)->Vec<GlyphRun>{
+        if text.is_empty(){return Vec::new();} let logical_runs=bidi_script_runs(text,style.direction);let visual_runs=reorder_runs(logical_runs,style.direction.unwrap_or_else(||paragraph_direction(text)));let mut out=Vec::new();
+        for run in visual_runs { let run_text=&text[run.range.clone()];let request=FontRequest{families:style.font_families.clone(),weight:style.font_weight,style:style.font_style,script:run.script,language:style.language.clone()};
+            match self.provider.select_face(&request,run_text){Ok(face)=>match self.provider.shape_run(ShapeRunRequest{face:&face,text:run_text,direction:run.direction,script:run.script,language:style.language.as_deref(),font_size:style.font_size}){Ok(result)=>out.push(build_run(result,run_text,global_offset+run.range.start,run.direction,run.script,style,Some(face))),Err(error)=>{let diagnostic=diagnostic_for_provider_error(error,global_offset+run.range.start..global_offset+run.range.end);diagnostics.push(diagnostic.clone());out.push(fallback_run(run_text,global_offset+run.range.start,run.direction,run.script,style,Some(diagnostic)));}},Err(error)=>{let diagnostic=diagnostic_for_provider_error(error,global_offset+run.range.start..global_offset+run.range.end);diagnostics.push(diagnostic.clone());out.push(fallback_run(run_text,global_offset+run.range.start,run.direction,run.script,style,Some(diagnostic)));}}
+        } out
     }
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FontStyle {
-    Normal,
-    Italic,
-    Oblique,
+#[derive(Debug,Clone)] struct LogicalRun{range:std::ops::Range<usize>,direction:TextDirection,script:Script}
+fn build_run(result:FontShapingResult,run_text:&str,global_offset:usize,direction:TextDirection,script:Script,style:&TextStyle,face:Option<FontFaceRef>)->GlyphRun{
+    let cluster_ranges=cluster_ranges(run_text,&result.glyphs);let mut glyphs=Vec::with_capacity(result.glyphs.len());let mut advance_x=0.0;
+    for(index,glyph)in result.glyphs.into_iter().enumerate(){let mut advance=glyph.advance_x;if advance!=0.0{advance+=style.letter_spacing;if cluster_is_space(run_text,glyph.cluster){advance+=style.word_spacing;}}advance_x+=advance;let source_range=cluster_ranges.get(index).cloned().unwrap_or(glyph.cluster..glyph.cluster).start+global_offset..cluster_ranges.get(index).cloned().unwrap_or(glyph.cluster..glyph.cluster).end+global_offset;glyphs.push(ShapedGlyph{glyph_id:glyph.glyph_id,cluster:global_offset+glyph.cluster,source_range,advance_x:advance,advance_y:glyph.advance_y,offset_x:glyph.offset_x,offset_y:glyph.offset_y});}
+    GlyphRun{source_range:global_offset..global_offset+run_text.len(),direction,script,language:style.language.clone(),face,glyphs,advance_x,diagnostics:Vec::new()}
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TextAnchor {
-    Start,
-    Middle,
-    End,
+fn fallback_run(run_text:&str,global_offset:usize,direction:TextDirection,script:Script,style:&TextStyle,diagnostic:Option<ShapingDiagnostic>)->GlyphRun{
+    let mut glyphs=Vec::new();let mut advance_x=0.0;let char_advance=style.font_size*0.6;for(byte,ch)in run_text.char_indices(){let end=byte+ch.len_utf8();let mut advance=if is_combining_mark(ch){0.0}else{char_advance+style.letter_spacing};if ch.is_whitespace()&&!is_combining_mark(ch){advance+=style.word_spacing;}advance_x+=advance;glyphs.push(ShapedGlyph{glyph_id:ch as u32,cluster:global_offset+byte,source_range:global_offset+byte..global_offset+end,advance_x:advance,advance_y:0.0,offset_x:0.0,offset_y:0.0});}if direction==TextDirection::Rtl{glyphs.reverse();}GlyphRun{source_range:global_offset..global_offset+run_text.len(),direction,script,language:style.language.clone(),face:None,glyphs,advance_x,diagnostics:diagnostic.into_iter().collect()}
 }
+fn diagnostic_for_provider_error(error:FontProviderError,range:std::ops::Range<usize>)->ShapingDiagnostic{let(code,message)=match error{FontProviderError::MissingFont=>("TS001","no font face matched this text run".to_string()),FontProviderError::MissingGlyphData=>("TS002","font backend could not provide shaping data for this run".to_string()),FontProviderError::UnsupportedScript=>("TS003","font backend does not support shaping this script".to_string()),FontProviderError::Backend(message)=>("TS004",format!("font shaping backend error: {message}"))};ShapingDiagnostic{code,message,source_range:Some(range)}}
+fn cluster_ranges(text:&str,glyphs:&[FontGlyph])->Vec<std::ops::Range<usize>>{if glyphs.is_empty(){return Vec::new();}let mut starts:Vec<usize>=glyphs.iter().map(|g|g.cluster.min(text.len())).collect();starts.sort_unstable();starts.dedup();let mut next_for=BTreeMap::new();for pair in starts.windows(2){next_for.insert(pair[0],pair[1]);}if let Some(last)=starts.last().copied(){next_for.insert(last,text.len());}glyphs.iter().map(|glyph|{let start=glyph.cluster.min(text.len());let end=*next_for.get(&start).unwrap_or(&start);start..end}).collect()}
+fn cluster_is_space(text:&str,cluster:usize)->bool{text.get(cluster..).and_then(|tail|tail.chars().next()).is_some_and(char::is_whitespace)}
+fn bidi_script_runs(text:&str,forced_direction:Option<TextDirection>)->Vec<LogicalRun>{let mut runs=Vec::new();let mut start=0;let mut current_script=Script::Common;let mut current_direction=forced_direction.unwrap_or(TextDirection::Ltr);let mut initialized=false;for(byte,ch)in text.char_indices(){let script=script_of(ch);let strong_script=matches!(script,Script::Latin|Script::Arabic|Script::Hebrew|Script::Devanagari);let direction=forced_direction.unwrap_or_else(||direction_of(ch).unwrap_or(current_direction));if !initialized{current_script=if strong_script{script}else{Script::Common};current_direction=direction;initialized=true;continue;}let script_change=strong_script&&current_script!=Script::Common&&script!=current_script;let direction_change=direction!=current_direction&&direction_of(ch).is_some();if script_change||direction_change{runs.push(LogicalRun{range:start..byte,direction:current_direction,script:current_script});start=byte;current_script=if strong_script{script}else{current_script};current_direction=direction;}else if current_script==Script::Common&&strong_script{current_script=script;}}if initialized{runs.push(LogicalRun{range:start..text.len(),direction:current_direction,script:current_script});}runs}
+fn reorder_runs(mut runs:Vec<LogicalRun>,paragraph_direction:TextDirection)->Vec<LogicalRun>{if paragraph_direction==TextDirection::Rtl{runs.reverse();}runs}
+pub fn paragraph_direction(text:&str)->TextDirection{for ch in text.chars(){if let Some(direction)=direction_of(ch){return direction;}}TextDirection::Ltr}
+pub fn script_of(ch:char)->Script{match ch as u32{0x0041..=0x005A|0x0061..=0x007A|0x00C0..=0x024F|0x1E00..=0x1EFF=>Script::Latin,0x0590..=0x05FF=>Script::Hebrew,0x0600..=0x06FF|0x0750..=0x077F|0x08A0..=0x08FF|0xFB50..=0xFDFF|0xFE70..=0xFEFF=>Script::Arabic,0x0900..=0x097F|0xA8E0..=0xA8FF=>Script::Devanagari,0x0300..=0x036F|0x1AB0..=0x1AFF|0x1DC0..=0x1DFF|0x20D0..=0x20FF|0xFE20..=0xFE2F=>Script::Inherited,0x0000..=0x0040|0x005B..=0x0060|0x007B..=0x00BF=>Script::Common,_=>Script::Unknown}}
+fn direction_of(ch:char)->Option<TextDirection>{match ch as u32{0x0590..=0x08FF|0xFB1D..=0xFDFF|0xFE70..=0xFEFF=>Some(TextDirection::Rtl),0x0041..=0x005A|0x0061..=0x007A|0x00C0..=0x02AF|0x0900..=0x097F=>Some(TextDirection::Ltr),_=>None}}
+fn is_combining_mark(ch:char)->bool{matches!(ch as u32,0x0300..=0x036F|0x0483..=0x0489|0x0591..=0x05BD|0x05BF|0x05C1..=0x05C2|0x05C4..=0x05C5|0x0610..=0x061A|0x064B..=0x065F|0x0670|0x06D6..=0x06ED|0x0900..=0x0903|0x093A..=0x094D|0x0951..=0x0957)}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FontRequest {
-    pub families: Vec<String>,
-    pub weight: u16,
-    pub style: FontStyle,
-    pub script: Script,
-    pub language: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FontFaceRef {
-    pub id: String,
-    pub family: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FontProviderError {
-    MissingFont,
-    MissingGlyphData,
-    UnsupportedScript,
-    Backend(String),
-}
-
-pub trait FontProvider {
-    fn select_face(&self, request: &FontRequest, text: &str) -> Result<FontFaceRef, FontProviderError>;
-
-    fn shape_run(&self, request: ShapeRunRequest<'_>) -> Result<FontShapingResult, FontProviderError>;
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct ShapeRunRequest<'a> {
-    pub face: &'a FontFaceRef,
-    pub text: &'a str,
-    pub direction: TextDirection,
-    pub script: Script,
-    pub language: Option<&'a str>,
-    pub font_size: f32,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct FontShapingResult {
-    pub glyphs: Vec<FontGlyph>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct FontGlyph {
-    pub glyph_id: u32,
-    pub cluster: usize,
-    pub advance_x: f32,
-    pub advance_y: f32,
-    pub offset_x: f32,
-    pub offset_y: f32,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ShapedText {
-    pub source: String,
-    pub runs: Vec<GlyphRun>,
-    pub lines: Vec<ShapedLine>,
-    pub diagnostics: Vec<ShapingDiagnostic>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ShapedLine {
-    pub source_range: std::ops::Range<usize>,
-    pub run_range: std::ops::Range<usize>,
-    pub advance_x: f32,
-    pub line_height: f32,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct GlyphRun {
-    pub source_range: std::ops::Range<usize>,
-    pub direction: TextDirection,
-    pub script: Script,
-    pub language: Option<String>,
-    pub face: Option<FontFaceRef>,
-    pub glyphs: Vec<ShapedGlyph>,
-    pub advance_x: f32,
-    pub diagnostics: Vec<ShapingDiagnostic>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ShapedGlyph {
-    pub glyph_id: u32,
-    pub cluster: usize,
-    pub source_range: std::ops::Range<usize>,
-    pub advance_x: f32,
-    pub advance_y: f32,
-    pub offset_x: f32,
-    pub offset_y: f32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ShapingDiagnostic {
-    pub code: &'static str,
-    pub message: String,
-    pub source_range: Option<std::ops::Range<usize>>,
-}
-
-pub struct TextShaper<'a, P: FontProvider> {
-    provider: &'a P,
-}
-
-impl<'a, P: FontProvider> TextShaper<'a, P> {
-    pub fn new(provider: &'a P) -> Self {
-        Self { provider }
-    }
-
-    pub fn shape(&self, text: &str, style: &TextStyle) -> ShapedText {
-        let mut runs = Vec::new();
-        let mut lines = Vec::new();
-        let mut diagnostics = Vec::new();
-        let mut line_start = 0usize;
-        let mut run_start = 0usize;
-
-        for segment in text.split_inclusive('\n') {
-            let has_newline = segment.ends_with('\n');
-            let line_text = if has_newline { &segment[..segment.len() - 1] } else { segment };
-            let line_end = line_start + line_text.len();
-            let line_runs = self.shape_line(line_text, line_start, style, &mut diagnostics);
-            let mut line_advance = 0.0f32;
-            for run in line_runs {
-                line_advance += run.advance_x;
-                runs.push(run);
-            }
-            let run_end = runs.len();
-            lines.push(ShapedLine {
-                source_range: line_start..line_end,
-                run_range: run_start..run_end,
-                advance_x: line_advance,
-                line_height: style.line_height.unwrap_or(style.font_size * 1.2),
-            });
-            run_start = run_end;
-            line_start = line_end + usize::from(has_newline);
-        }
-
-        if text.is_empty() || text.ends_with('\n') {
-            lines.push(ShapedLine {
-                source_range: text.len()..text.len(),
-                run_range: runs.len()..runs.len(),
-                advance_x: 0.0,
-                line_height: style.line_height.unwrap_or(style.font_size * 1.2),
-            });
-        }
-
-        ShapedText {
-            source: text.to_string(),
-            runs,
-            lines,
-            diagnostics,
-        }
-    }
-
-    fn shape_line(
-        &self,
-        text: &str,
-        global_offset: usize,
-        style: &TextStyle,
-        diagnostics: &mut Vec<ShapingDiagnostic>,
-    ) -> Vec<GlyphRun> {
-        if text.is_empty() {
-            return Vec::new();
-        }
-
-        let logical_runs = bidi_script_runs(text, style.direction);
-        let visual_runs = reorder_runs(logical_runs, style.direction.unwrap_or_else(|| paragraph_direction(text)));
-        let mut out = Vec::new();
-
-        for run in visual_runs {
-            let run_text = &text[run.range.clone()];
-            let request = FontRequest {
-                families: style.font_families.clone(),
-                weight: style.font_weight,
-                style: style.font_style,
-                script: run.script,
-                language: style.language.clone(),
-            };
-
-            match self.provider.select_face(&request, run_text) {
-                Ok(face) => {
-                    match self.provider.shape_run(ShapeRunRequest {
-                        face: &face,
-                        text: run_text,
-                        direction: run.direction,
-                        script: run.script,
-                        language: style.language.as_deref(),
-                        font_size: style.font_size,
-                    }) {
-                        Ok(result) => out.push(build_run(
-                            result,
-                            run_text,
-                            global_offset + run.range.start,
-                            run.direction,
-                            run.script,
-                            style,
-                            Some(face),
-                        )),
-                        Err(error) => {
-                            let diagnostic = diagnostic_for_provider_error(error, global_offset + run.range.start..global_offset + run.range.end);
-                            diagnostics.push(diagnostic.clone());
-                            out.push(fallback_run(
-                                run_text,
-                                global_offset + run.range.start,
-                                run.direction,
-                                run.script,
-                                style,
-                                Some(diagnostic),
-                            ));
-                        }
-                    }
-                }
-                Err(error) => {
-                    let diagnostic = diagnostic_for_provider_error(error, global_offset + run.range.start..global_offset + run.range.end);
-                    diagnostics.push(diagnostic.clone());
-                    out.push(fallback_run(
-                        run_text,
-                        global_offset + run.range.start,
-                        run.direction,
-                        run.script,
-                        style,
-                        Some(diagnostic),
-                    ));
-                }
-            }
-        }
-
-        out
-    }
-}
-
-#[derive(Debug, Clone)]
-struct LogicalRun {
-    range: std::ops::Range<usize>,
-    direction: TextDirection,
-    script: Script,
-}
-
-fn build_run(
-    result: FontShapingResult,
-    run_text: &str,
-    global_offset: usize,
-    direction: TextDirection,
-    script: Script,
-    style: &TextStyle,
-    face: Option<FontFaceRef>,
-) -> GlyphRun {
-    let cluster_ranges = cluster_ranges(run_text, &result.glyphs);
-    let mut glyphs = Vec::with_capacity(result.glyphs.len());
-    let mut advance_x = 0.0;
-
-    for (index, glyph) in result.glyphs.into_iter().enumerate() {
-        let mut advance = glyph.advance_x;
-        if advance != 0.0 {
-            advance += style.letter_spacing;
-            if cluster_is_space(run_text, glyph.cluster) {
-                advance += style.word_spacing;
-            }
-        }
-        advance_x += advance;
-        let source_range = cluster_ranges
-            .get(index)
-            .cloned()
-            .unwrap_or(glyph.cluster..glyph.cluster)
-            .start + global_offset
-            ..cluster_ranges
-                .get(index)
-                .cloned()
-                .unwrap_or(glyph.cluster..glyph.cluster)
-                .end
-                + global_offset;
-        glyphs.push(ShapedGlyph {
-            glyph_id: glyph.glyph_id,
-            cluster: global_offset + glyph.cluster,
-            source_range,
-            advance_x: advance,
-            advance_y: glyph.advance_y,
-            offset_x: glyph.offset_x,
-            offset_y: glyph.offset_y,
-        });
-    }
-
-    GlyphRun {
-        source_range: global_offset..global_offset + run_text.len(),
-        direction,
-        script,
-        language: style.language.clone(),
-        face,
-        glyphs,
-        advance_x,
-        diagnostics: Vec::new(),
-    }
-}
-
-fn fallback_run(
-    run_text: &str,
-    global_offset: usize,
-    direction: TextDirection,
-    script: Script,
-    style: &TextStyle,
-    diagnostic: Option<ShapingDiagnostic>,
-) -> GlyphRun {
-    let mut glyphs = Vec::new();
-    let mut advance_x = 0.0f32;
-    let char_advance = style.font_size * 0.6;
-
-    for (byte, ch) in run_text.char_indices() {
-        let end = byte + ch.len_utf8();
-        let mut advance = if is_combining_mark(ch) { 0.0 } else { char_advance + style.letter_spacing };
-        if ch.is_whitespace() && !is_combining_mark(ch) {
-            advance += style.word_spacing;
-        }
-        advance_x += advance;
-        glyphs.push(ShapedGlyph {
-            glyph_id: ch as u32,
-            cluster: global_offset + byte,
-            source_range: global_offset + byte..global_offset + end,
-            advance_x: advance,
-            advance_y: 0.0,
-            offset_x: 0.0,
-            offset_y: 0.0,
-        });
-    }
-
-    if direction == TextDirection::Rtl {
-        glyphs.reverse();
-    }
-
-    GlyphRun {
-        source_range: global_offset..global_offset + run_text.len(),
-        direction,
-        script,
-        language: style.language.clone(),
-        face: None,
-        glyphs,
-        advance_x,
-        diagnostics: diagnostic.into_iter().collect(),
-    }
-}
-
-fn diagnostic_for_provider_error(error: FontProviderError, range: std::ops::Range<usize>) -> ShapingDiagnostic {
-    let (code, message) = match error {
-        FontProviderError::MissingFont => ("TS001", "no font face matched this text run".to_string()),
-        FontProviderError::MissingGlyphData => ("TS002", "font backend could not provide shaping data for this run".to_string()),
-        FontProviderError::UnsupportedScript => ("TS003", "font backend does not support shaping this script".to_string()),
-        FontProviderError::Backend(message) => ("TS004", format!("font shaping backend error: {message}")),
-    };
-    ShapingDiagnostic { code, message, source_range: Some(range) }
-}
-
-fn cluster_ranges(text: &str, glyphs: &[FontGlyph]) -> Vec<std::ops::Range<usize>> {
-    if glyphs.is_empty() {
-        return Vec::new();
-    }
-    let mut starts: Vec<usize> = glyphs.iter().map(|g| g.cluster.min(text.len())).collect();
-    starts.sort_unstable();
-    starts.dedup();
-    let mut next_for = BTreeMap::new();
-    for pair in starts.windows(2) {
-        next_for.insert(pair[0], pair[1]);
-    }
-    if let Some(last) = starts.last().copied() {
-        next_for.insert(last, text.len());
-    }
-    glyphs
-        .iter()
-        .map(|glyph| {
-            let start = glyph.cluster.min(text.len());
-            let end = *next_for.get(&start).unwrap_or(&start);
-            start..end
-        })
-        .collect()
-}
-
-fn cluster_is_space(text: &str, cluster: usize) -> bool {
-    text.get(cluster..).and_then(|tail| tail.chars().next()).is_some_and(char::is_whitespace)
-}
-
-fn bidi_script_runs(text: &str, forced_direction: Option<TextDirection>) -> Vec<LogicalRun> {
-    let mut runs = Vec::new();
-    let mut start = 0usize;
-    let mut current_script = Script::Common;
-    let mut current_direction = forced_direction.unwrap_or(TextDirection::Ltr);
-    let mut initialized = false;
-
-    for (byte, ch) in text.char_indices() {
-        let script = script_of(ch);
-        let strong_script = matches!(script, Script::Latin | Script::Arabic | Script::Hebrew | Script::Devanagari);
-        let direction = forced_direction.unwrap_or_else(|| direction_of(ch).unwrap_or(current_direction));
-
-        if !initialized {
-            current_script = if strong_script { script } else { Script::Common };
-            current_direction = direction;
-            initialized = true;
-            continue;
-        }
-
-        let script_change = strong_script && current_script != Script::Common && script != current_script;
-        let direction_change = direction != current_direction && direction_of(ch).is_some();
-        if script_change || direction_change {
-            runs.push(LogicalRun {
-                range: start..byte,
-                direction: current_direction,
-                script: current_script,
-            });
-            start = byte;
-            current_script = if strong_script { script } else { current_script };
-            current_direction = direction;
-        } else if current_script == Script::Common && strong_script {
-            current_script = script;
-        }
-    }
-
-    if initialized {
-        runs.push(LogicalRun {
-            range: start..text.len(),
-            direction: current_direction,
-            script: current_script,
-        });
-    }
-    runs
-}
-
-fn reorder_runs(mut runs: Vec<LogicalRun>, paragraph_direction: TextDirection) -> Vec<LogicalRun> {
-    if paragraph_direction == TextDirection::Rtl {
-        runs.reverse();
-    }
-    runs
-}
-
-pub fn paragraph_direction(text: &str) -> TextDirection {
-    for ch in text.chars() {
-        if let Some(direction) = direction_of(ch) {
-            return direction;
-        }
-    }
-    TextDirection::Ltr
-}
-
-pub fn script_of(ch: char) -> Script {
-    match ch as u32 {
-        0x0041..=0x005A | 0x0061..=0x007A | 0x00C0..=0x024F | 0x1E00..=0x1EFF => Script::Latin,
-        0x0590..=0x05FF => Script::Hebrew,
-        0x0600..=0x06FF | 0x0750..=0x077F | 0x08A0..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFF => Script::Arabic,
-        0x0900..=0x097F | 0xA8E0..=0xA8FF => Script::Devanagari,
-        0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF | 0xFE20..=0xFE2F => Script::Inherited,
-        0x0000..=0x0040 | 0x005B..=0x0060 | 0x007B..=0x00BF => Script::Common,
-        _ => Script::Unknown,
-    }
-}
-
-fn direction_of(ch: char) -> Option<TextDirection> {
-    match ch as u32 {
-        0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF => Some(TextDirection::Rtl),
-        0x0041..=0x005A | 0x0061..=0x007A | 0x00C0..=0x02AF | 0x0900..=0x097F => Some(TextDirection::Ltr),
-        _ => None,
-    }
-}
-
-fn is_combining_mark(ch: char) -> bool {
-    matches!(ch as u32,
-        0x0300..=0x036F
-        | 0x0483..=0x0489
-        | 0x0591..=0x05BD
-        | 0x05BF
-        | 0x05C1..=0x05C2
-        | 0x05C4..=0x05C5
-        | 0x0610..=0x061A
-        | 0x064B..=0x065F
-        | 0x0670
-        | 0x06D6..=0x06ED
-        | 0x0900..=0x0903
-        | 0x093A..=0x094D
-        | 0x0951..=0x0957
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct MockProvider;
-
-    impl FontProvider for MockProvider {
-        fn select_face(&self, request: &FontRequest, _text: &str) -> Result<FontFaceRef, FontProviderError> {
-            Ok(FontFaceRef {
-                id: format!("{:?}-{}", request.script, request.weight),
-                family: request.families.first().cloned().unwrap_or_else(|| "Mock".into()),
-            })
-        }
-
-        fn shape_run(&self, request: ShapeRunRequest<'_>) -> Result<FontShapingResult, FontProviderError> {
-            if request.text == "office" {
-                return Ok(FontShapingResult {
-                    glyphs: vec![
-                        FontGlyph { glyph_id: 1, cluster: 0, advance_x: 10.0, advance_y: 0.0, offset_x: 0.0, offset_y: 0.0 },
-                        FontGlyph { glyph_id: 42, cluster: 1, advance_x: 12.0, advance_y: 0.0, offset_x: 0.0, offset_y: 0.0 },
-                        FontGlyph { glyph_id: 5, cluster: 4, advance_x: 10.0, advance_y: 0.0, offset_x: 0.0, offset_y: 0.0 },
-                        FontGlyph { glyph_id: 6, cluster: 5, advance_x: 10.0, advance_y: 0.0, offset_x: 0.0, offset_y: 0.0 },
-                    ],
-                });
-            }
-            let mut glyphs: Vec<_> = request
-                .text
-                .char_indices()
-                .map(|(cluster, ch)| FontGlyph {
-                    glyph_id: ch as u32,
-                    cluster,
-                    advance_x: if is_combining_mark(ch) { 0.0 } else { 10.0 },
-                    advance_y: 0.0,
-                    offset_x: if is_combining_mark(ch) { -2.0 } else { 0.0 },
-                    offset_y: if is_combining_mark(ch) { 3.0 } else { 0.0 },
-                })
-                .collect();
-            if request.direction == TextDirection::Rtl {
-                glyphs.reverse();
-            }
-            Ok(FontShapingResult { glyphs })
-        }
-    }
-
-    #[test]
-    fn latin_ligature_preserves_cluster_mapping() {
-        let shaper = TextShaper::new(&MockProvider);
-        let shaped = shaper.shape("office", &TextStyle::default());
-        assert_eq!(shaped.runs.len(), 1);
-        assert_eq!(shaped.runs[0].glyphs.len(), 4);
-        assert_eq!(shaped.runs[0].glyphs[1].source_range, 1..4);
-    }
-
-    #[test]
-    fn combining_mark_keeps_zero_advance_and_cluster() {
-        let shaper = TextShaper::new(&MockProvider);
-        let shaped = shaper.shape("a\u{0301}", &TextStyle::default());
-        let glyphs = &shaped.runs[0].glyphs;
-        assert_eq!(glyphs.len(), 2);
-        assert_eq!(glyphs[1].advance_x, 0.0);
-        assert_eq!(glyphs[1].source_range, 1..3);
-        assert_eq!(glyphs[1].offset_y, 3.0);
-    }
-
-    #[test]
-    fn rtl_paragraph_reorders_runs_without_losing_source_ranges() {
-        let shaper = TextShaper::new(&MockProvider);
-        let shaped = shaper.shape("שלום abc", &TextStyle::default());
-        assert_eq!(paragraph_direction("שלום abc"), TextDirection::Rtl);
-        assert!(shaped.runs.iter().any(|run| run.direction == TextDirection::Rtl));
-        assert!(shaped.runs.iter().any(|run| run.direction == TextDirection::Ltr));
-        assert!(shaped.runs.iter().all(|run| run.source_range.end <= "שלום abc".len()));
-    }
-
-    #[test]
-    fn devanagari_is_detected_as_complex_script_run() {
-        let shaper = TextShaper::new(&MockProvider);
-        let shaped = shaper.shape("नमस्ते", &TextStyle::default());
-        assert_eq!(shaped.runs.len(), 1);
-        assert_eq!(shaped.runs[0].script, Script::Devanagari);
-        assert_eq!(shaped.runs[0].direction, TextDirection::Ltr);
-    }
-
-    #[test]
-    fn arabic_is_rtl_and_preserves_byte_clusters() {
-        let shaper = TextShaper::new(&MockProvider);
-        let shaped = shaper.shape("مرحبا", &TextStyle::default());
-        assert_eq!(shaped.runs.len(), 1);
-        assert_eq!(shaped.runs[0].direction, TextDirection::Rtl);
-        assert_eq!(shaped.runs[0].script, Script::Arabic);
-        assert!(shaped.runs[0].glyphs.iter().all(|glyph| glyph.cluster < "مرحبا".len()));
-    }
-
-    #[test]
-    fn multiline_preserves_line_ranges_and_line_height() {
-        let shaper = TextShaper::new(&MockProvider);
-        let mut style = TextStyle::default();
-        style.line_height = Some(24.0);
-        let shaped = shaper.shape("one\ntwo", &style);
-        assert_eq!(shaped.lines.len(), 2);
-        assert_eq!(shaped.lines[0].source_range, 0..3);
-        assert_eq!(shaped.lines[1].source_range, 4..7);
-        assert_eq!(shaped.lines[0].line_height, 24.0);
-    }
-
-    #[test]
-    fn spacing_is_applied_after_font_shaping() {
-        let shaper = TextShaper::new(&MockProvider);
-        let mut style = TextStyle::default();
-        style.letter_spacing = 1.0;
-        style.word_spacing = 2.0;
-        let shaped = shaper.shape("a b", &style);
-        assert_eq!(shaped.runs[0].advance_x, 36.0);
-    }
-
-    struct MissingProvider;
-
-    impl FontProvider for MissingProvider {
-        fn select_face(&self, _request: &FontRequest, _text: &str) -> Result<FontFaceRef, FontProviderError> {
-            Err(FontProviderError::MissingFont)
-        }
-        fn shape_run(&self, _request: ShapeRunRequest<'_>) -> Result<FontShapingResult, FontProviderError> {
-            unreachable!()
-        }
-    }
-
-    #[test]
-    fn missing_font_produces_diagnostic_but_keeps_unicode_data() {
-        let shaper = TextShaper::new(&MissingProvider);
-        let shaped = shaper.shape("é", &TextStyle::default());
-        assert_eq!(shaped.diagnostics[0].code, "TS001");
-        assert_eq!(shaped.runs[0].glyphs[0].glyph_id, 'é' as u32);
-        assert_eq!(shaped.runs[0].glyphs[0].source_range, 0..2);
-    }
+#[cfg(test)] mod tests{
+use super::*;struct MockProvider;impl FontProvider for MockProvider{fn select_face(&self,request:&FontRequest,_text:&str)->Result<FontFaceRef,FontProviderError>{Ok(FontFaceRef{id:format!("{:?}-{}",request.script,request.weight),family:request.families.first().cloned().unwrap_or_else(||"Mock".into())})}fn shape_run(&self,request:ShapeRunRequest<'_>)->Result<FontShapingResult,FontProviderError>{if request.text=="office"{return Ok(FontShapingResult{glyphs:vec![FontGlyph{glyph_id:1,cluster:0,advance_x:10.0,advance_y:0.0,offset_x:0.0,offset_y:0.0},FontGlyph{glyph_id:42,cluster:1,advance_x:12.0,advance_y:0.0,offset_x:0.0,offset_y:0.0},FontGlyph{glyph_id:5,cluster:4,advance_x:10.0,advance_y:0.0,offset_x:0.0,offset_y:0.0},FontGlyph{glyph_id:6,cluster:5,advance_x:10.0,advance_y:0.0,offset_x:0.0,offset_y:0.0}]});}let mut glyphs:Vec<_>=request.text.char_indices().map(|(cluster,ch)|FontGlyph{glyph_id:ch as u32,cluster,advance_x:if is_combining_mark(ch){0.0}else{10.0},advance_y:0.0,offset_x:if is_combining_mark(ch){-2.0}else{0.0},offset_y:if is_combining_mark(ch){3.0}else{0.0}}).collect();if request.direction==TextDirection::Rtl{glyphs.reverse();}Ok(FontShapingResult{glyphs})}}
+#[test]fn latin_ligature_preserves_cluster_mapping(){let shaper=TextShaper::new(&MockProvider);let shaped=shaper.shape("office",&TextStyle::default());assert_eq!(shaped.runs.len(),1);assert_eq!(shaped.runs[0].glyphs.len(),4);assert_eq!(shaped.runs[0].glyphs[1].source_range,1..4);}
+#[test]fn combining_mark_keeps_zero_advance_and_cluster(){let shaper=TextShaper::new(&MockProvider);let shaped=shaper.shape("a\u{0301}",&TextStyle::default());let glyphs=&shaped.runs[0].glyphs;assert_eq!(glyphs.len(),2);assert_eq!(glyphs[1].advance_x,0.0);assert_eq!(glyphs[1].source_range,1..3);assert_eq!(glyphs[1].offset_y,3.0);}
+#[test]fn rtl_paragraph_reorders_runs_without_losing_source_ranges(){let shaper=TextShaper::new(&MockProvider);let shaped=shaper.shape("שלום abc",&TextStyle::default());assert_eq!(paragraph_direction("שלום abc"),TextDirection::Rtl);assert!(shaped.runs.iter().any(|run|run.direction==TextDirection::Rtl));assert!(shaped.runs.iter().any(|run|run.direction==TextDirection::Ltr));assert!(shaped.runs.iter().all(|run|run.source_range.end<="שלום abc".len()));}
+#[test]fn devanagari_is_detected_as_complex_script_run(){let shaper=TextShaper::new(&MockProvider);let shaped=shaper.shape("नमस्ते",&TextStyle::default());assert_eq!(shaped.runs.len(),1);assert_eq!(shaped.runs[0].script,Script::Devanagari);assert_eq!(shaped.runs[0].direction,TextDirection::Ltr);}
+#[test]fn arabic_is_rtl_and_preserves_byte_clusters(){let shaper=TextShaper::new(&MockProvider);let shaped=shaper.shape("مرحبا",&TextStyle::default());assert_eq!(shaped.runs.len(),1);assert_eq!(shaped.runs[0].direction,TextDirection::Rtl);assert_eq!(shaped.runs[0].script,Script::Arabic);assert!(shaped.runs[0].glyphs.iter().all(|glyph|glyph.cluster<"مرحبا".len()));}
+#[test]fn multiline_preserves_line_ranges_and_line_height(){let shaper=TextShaper::new(&MockProvider);let mut style=TextStyle::default();style.line_height=Some(24.0);let shaped=shaper.shape("one\ntwo",&style);assert_eq!(shaped.lines.len(),2);assert_eq!(shaped.lines[0].source_range,0..3);assert_eq!(shaped.lines[1].source_range,4..7);assert_eq!(shaped.lines[0].line_height,24.0);}
+#[test]fn spacing_is_applied_after_font_shaping(){let shaper=TextShaper::new(&MockProvider);let mut style=TextStyle::default();style.letter_spacing=1.0;style.word_spacing=2.0;let shaped=shaper.shape("a b",&style);assert_eq!(shaped.runs[0].advance_x,35.0);}
+struct MissingProvider;impl FontProvider for MissingProvider{fn select_face(&self,_request:&FontRequest,_text:&str)->Result<FontFaceRef,FontProviderError>{Err(FontProviderError::MissingFont)}fn shape_run(&self,_request:ShapeRunRequest<'_>)->Result<FontShapingResult,FontProviderError>{unreachable!()}}
+#[test]fn missing_font_produces_diagnostic_but_keeps_unicode_data(){let shaper=TextShaper::new(&MissingProvider);let shaped=shaper.shape("é",&TextStyle::default());assert_eq!(shaped.diagnostics[0].code,"TS001");assert_eq!(shaped.runs[0].glyphs[0].glyph_id,'é' as u32);assert_eq!(shaped.runs[0].glyphs[0].source_range,0..2);}
 }
