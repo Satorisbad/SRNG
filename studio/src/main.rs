@@ -25,9 +25,16 @@ enum InfoTab {
     Metadata,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceKind {
+    Svg,
+    Srng,
+}
+
 struct StudioApp {
     path: Option<PathBuf>,
     source_name: String,
+    source_kind: Option<SourceKind>,
     svg_source: String,
     srng_source: String,
     diagnostics: Vec<StudioDiagnostic>,
@@ -43,7 +50,8 @@ impl StudioApp {
     fn new(cc: &eframe::CreationContext<'_>, initial: Option<PathBuf>) -> Self {
         let mut app = Self {
             path: None,
-            source_name: "untitled.svg".to_string(),
+            source_name: "untitled.srng".to_string(),
+            source_kind: None,
             svg_source: String::new(),
             srng_source: String::new(),
             diagnostics: Vec::new(),
@@ -51,7 +59,7 @@ impl StudioApp {
             rendered_image: None,
             original_texture: None,
             rendered_texture: None,
-            status: "Drop an SVG anywhere in the window, or choose Open SVG.".to_string(),
+            status: "Drop an SRNG or SVG file anywhere in the window, or choose Open.".to_string(),
             info_tab: InfoTab::Diagnostics,
         };
         if let Some(path) = initial {
@@ -61,14 +69,28 @@ impl StudioApp {
     }
 
     fn load_path(&mut self, path: &Path, ctx: &egui::Context) {
+        let kind = match source_kind_from_path(path) {
+            Some(kind) => kind,
+            None => {
+                self.status = format!("Unsupported file type: {}", path.display());
+                return;
+            }
+        };
+
         match fs::read_to_string(path) {
-            Ok(svg) => {
+            Ok(source) => {
                 let name = path
                     .file_name()
                     .and_then(|p| p.to_str())
-                    .unwrap_or("untitled.svg")
+                    .unwrap_or(match kind {
+                        SourceKind::Svg => "untitled.svg",
+                        SourceKind::Srng => "untitled.srng",
+                    })
                     .to_string();
-                self.load_svg_text(svg, name, Some(path.to_path_buf()), ctx);
+                match kind {
+                    SourceKind::Svg => self.load_svg_text(source, name, Some(path.to_path_buf()), ctx),
+                    SourceKind::Srng => self.load_srng_text(source, name, Some(path.to_path_buf()), ctx),
+                }
             }
             Err(error) => {
                 self.status = format!("Could not open {}: {error}", path.display());
@@ -84,6 +106,7 @@ impl StudioApp {
         ctx: &egui::Context,
     ) {
         self.path = path;
+        self.source_kind = Some(SourceKind::Svg);
         self.source_name = if name.trim().is_empty() {
             "dropped.svg".to_string()
         } else {
@@ -91,6 +114,30 @@ impl StudioApp {
         };
         self.svg_source = svg;
         self.convert(ctx);
+    }
+
+    fn load_srng_text(
+        &mut self,
+        srng: String,
+        name: String,
+        path: Option<PathBuf>,
+        ctx: &egui::Context,
+    ) {
+        self.path = path;
+        self.source_kind = Some(SourceKind::Srng);
+        self.source_name = if name.trim().is_empty() {
+            "dropped.srng".to_string()
+        } else {
+            name
+        };
+        self.svg_source.clear();
+        self.original_image = None;
+        self.original_texture = None;
+        self.srng_source = srng;
+        self.render_edited_srng(ctx);
+        if self.rendered_image.is_some() {
+            self.status = format!("Opened and rendered {}", self.source_name);
+        }
     }
 
     fn convert(&mut self, ctx: &egui::Context) {
@@ -110,7 +157,12 @@ impl StudioApp {
     }
 
     fn render_edited_srng(&mut self, ctx: &egui::Context) {
-        let (image, diagnostics) = render_srng(&self.srng_source, "studio.srng");
+        let source_name = if self.source_name.ends_with(".srng") {
+            self.source_name.as_str()
+        } else {
+            "studio.srng"
+        };
+        let (image, diagnostics) = render_srng(&self.srng_source, source_name);
         self.rendered_image = image;
         self.diagnostics = diagnostics;
         self.refresh_rendered_texture(ctx);
@@ -138,6 +190,8 @@ impl StudioApp {
 
     fn open_dialog(&mut self, ctx: &egui::Context) {
         if let Some(path) = rfd::FileDialog::new()
+            .add_filter("SRNG and SVG", &["srng", "svg"])
+            .add_filter("SRNG", &["srng"])
             .add_filter("SVG", &["svg"])
             .pick_file()
         {
@@ -181,35 +235,39 @@ impl StudioApp {
         }
     }
 
+    fn reload_current(&mut self, ctx: &egui::Context) {
+        if let Some(path) = self.path.clone() {
+            self.load_path(&path, ctx);
+        } else {
+            self.status = "Current source has no file path to reload.".to_string();
+        }
+    }
+
     fn handle_dropped_files(&mut self, ctx: &egui::Context) {
         let dropped = ctx.input(|input| input.raw.dropped_files.clone());
         for file in dropped {
             if let Some(path) = file.path.as_ref() {
-                if path
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
-                {
-                    self.load_path(path, ctx);
-                    return;
-                }
-                self.status = format!("Dropped file is not an SVG: {}", path.display());
-                continue;
+                self.load_path(path, ctx);
+                return;
             }
 
             if let Some(bytes) = file.bytes.as_ref() {
                 match String::from_utf8(bytes.to_vec()) {
-                    Ok(svg) => {
+                    Ok(source) => {
                         let name = if file.name.trim().is_empty() {
-                            "dropped.svg".to_string()
+                            "dropped.srng".to_string()
                         } else {
                             file.name.clone()
                         };
-                        self.load_svg_text(svg, name, None, ctx);
+                        match source_kind_from_name(&name) {
+                            Some(SourceKind::Svg) => self.load_svg_text(source, name, None, ctx),
+                            Some(SourceKind::Srng) => self.load_srng_text(source, name, None, ctx),
+                            None => self.status = "Dropped text is not a recognized .srng or .svg file.".to_string(),
+                        }
                         return;
                     }
                     Err(_) => {
-                        self.status = "Dropped SVG was not valid UTF-8 text.".to_string();
+                        self.status = "Dropped file was not valid UTF-8 text.".to_string();
                     }
                 }
             }
@@ -259,11 +317,18 @@ impl eframe::App for StudioApp {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("SRNG Studio").strong().size(20.0));
                     ui.separator();
-                    if ui.button("Open SVG").on_hover_text("Choose an SVG file").clicked() {
+                    if ui.button("Open").on_hover_text("Choose an SRNG or SVG file").clicked() {
                         self.open_dialog(ctx);
                     }
                     if ui
-                        .add_enabled(!self.svg_source.is_empty(), egui::Button::new("Convert"))
+                        .add_enabled(self.path.is_some(), egui::Button::new("Reload"))
+                        .on_hover_text("Reload the current file from disk")
+                        .clicked()
+                    {
+                        self.reload_current(ctx);
+                    }
+                    if ui
+                        .add_enabled(!self.svg_source.is_empty(), egui::Button::new("Convert SVG"))
                         .on_hover_text("Convert the current SVG source to SRNG")
                         .clicked()
                     {
@@ -290,7 +355,7 @@ impl eframe::App for StudioApp {
                         self.save_png();
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let name = if self.svg_source.is_empty() {
+                        let name = if self.source_kind.is_none() {
                             "No file loaded"
                         } else {
                             &self.source_name
@@ -361,18 +426,18 @@ impl eframe::App for StudioApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add_space(6.0);
-            if self.svg_source.is_empty() {
+            if self.source_kind.is_none() {
                 let available = ui.available_size();
                 ui.allocate_ui_with_layout(
                     available,
                     egui::Layout::top_down(egui::Align::Center),
                     |ui| {
                         ui.add_space((available.y * 0.28).max(30.0));
-                        ui.label(egui::RichText::new("Drop an SVG here").strong().size(26.0));
+                        ui.label(egui::RichText::new("Drop an SRNG or SVG file here").strong().size(26.0));
                         ui.add_space(8.0);
-                        ui.label("Drag from your file manager, or use Open SVG.");
+                        ui.label("Drag from your file manager, or use Open.");
                         ui.add_space(16.0);
-                        if ui.button("Open SVG").clicked() {
+                        if ui.button("Open").clicked() {
                             self.open_dialog(ctx);
                         }
                     },
@@ -380,31 +445,51 @@ impl eframe::App for StudioApp {
                 return;
             }
 
-            let preview_height = (ui.available_height() * 0.50).max(260.0);
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), preview_height),
-                egui::Layout::left_to_right(egui::Align::TOP),
-                |ui| {
-                    let half = (ui.available_width() - 12.0) / 2.0;
+            match self.source_kind {
+                Some(SourceKind::Svg) => {
+                    let preview_height = (ui.available_height() * 0.50).max(260.0);
                     ui.allocate_ui_with_layout(
-                        egui::vec2(half, preview_height),
-                        egui::Layout::top_down(egui::Align::LEFT),
+                        egui::vec2(ui.available_width(), preview_height),
+                        egui::Layout::left_to_right(egui::Align::TOP),
                         |ui| {
-                            panel_header(ui, "Original SVG", "Source rendered by resvg");
-                            preview_panel(
-                                ui,
-                                self.original_texture.as_ref(),
-                                self.original_image.as_ref(),
-                                "SVG preview unavailable.",
+                            let half = (ui.available_width() - 12.0) / 2.0;
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(half, preview_height),
+                                egui::Layout::top_down(egui::Align::LEFT),
+                                |ui| {
+                                    panel_header(ui, "Original SVG", "Source rendered by resvg");
+                                    preview_panel(
+                                        ui,
+                                        self.original_texture.as_ref(),
+                                        self.original_image.as_ref(),
+                                        "SVG preview unavailable.",
+                                    );
+                                },
+                            );
+                            ui.separator();
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(half, preview_height),
+                                egui::Layout::top_down(egui::Align::LEFT),
+                                |ui| {
+                                    panel_header(ui, "SRNG Render", "Rendered by the SRNG CPU renderer");
+                                    preview_panel(
+                                        ui,
+                                        self.rendered_texture.as_ref(),
+                                        self.rendered_image.as_ref(),
+                                        "SRNG preview unavailable.",
+                                    );
+                                },
                             );
                         },
                     );
-                    ui.separator();
+                }
+                Some(SourceKind::Srng) => {
+                    let preview_height = (ui.available_height() * 0.58).max(300.0);
                     ui.allocate_ui_with_layout(
-                        egui::vec2(half, preview_height),
+                        egui::vec2(ui.available_width(), preview_height),
                         egui::Layout::top_down(egui::Align::LEFT),
                         |ui| {
-                            panel_header(ui, "SRNG Render", "Rendered by the SRNG CPU renderer");
+                            panel_header(ui, "SRNG Render", "Native SRNG document preview");
                             preview_panel(
                                 ui,
                                 self.rendered_texture.as_ref(),
@@ -413,17 +498,22 @@ impl eframe::App for StudioApp {
                             );
                         },
                     );
-                },
-            );
+                }
+                None => {}
+            }
 
             ui.separator();
             ui.horizontal(|ui| {
-                panel_header(ui, "Generated SRNG", "Editable before re-rendering");
+                panel_header(
+                    ui,
+                    if self.source_kind == Some(SourceKind::Svg) { "Generated SRNG" } else { "SRNG Source" },
+                    "Editable before re-rendering",
+                );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Copy SRNG").clicked() {
                         self.copy_text(ctx, "SRNG", self.srng_source.clone());
                     }
-                    if ui.button("Copy SVG source").clicked() {
+                    if self.source_kind == Some(SourceKind::Svg) && ui.button("Copy SVG source").clicked() {
                         self.copy_text(ctx, "SVG source", self.svg_source.clone());
                     }
                 });
@@ -441,65 +531,77 @@ impl eframe::App for StudioApp {
                 egui::Order::Foreground,
                 egui::Id::new("drop-overlay"),
             ));
-            let screen = ctx.screen_rect();
-            painter.rect_filled(screen, 8.0, egui::Color32::from_black_alpha(180));
+            let rect = ctx.content_rect();
+            painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(180));
             painter.text(
-                screen.center(),
+                rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "Drop SVG to open",
-                egui::FontId::proportional(30.0),
+                "Drop SRNG or SVG to open",
+                egui::FontId::proportional(32.0),
                 egui::Color32::WHITE,
             );
         }
     }
 }
 
-fn panel_header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(title).strong().size(16.0));
-        ui.small(subtitle);
-    });
+fn source_kind_from_path(path: &Path) -> Option<SourceKind> {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .and_then(source_kind_from_extension)
 }
 
-fn load_texture(ctx: &egui::Context, name: &str, image: &RgbaImage) -> egui::TextureHandle {
-    let color = egui::ColorImage::from_rgba_unmultiplied([image.width, image.height], &image.pixels);
-    ctx.load_texture(name, color, egui::TextureOptions::LINEAR)
+fn source_kind_from_name(name: &str) -> Option<SourceKind> {
+    Path::new(name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .and_then(source_kind_from_extension)
+}
+
+fn source_kind_from_extension(ext: &str) -> Option<SourceKind> {
+    if ext.eq_ignore_ascii_case("svg") {
+        Some(SourceKind::Svg)
+    } else if ext.eq_ignore_ascii_case("srng") {
+        Some(SourceKind::Srng)
+    } else {
+        None
+    }
+}
+
+fn panel_header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(egui::RichText::new(title).strong().size(17.0));
+        ui.label(egui::RichText::new(subtitle).weak());
+    });
+    ui.add_space(4.0);
 }
 
 fn preview_panel(
     ui: &mut egui::Ui,
     texture: Option<&egui::TextureHandle>,
     image: Option<&RgbaImage>,
-    empty: &str,
+    unavailable: &str,
 ) {
-    ui.add_space(4.0);
     egui::Frame::group(ui.style()).show(ui, |ui| {
         let available = ui.available_size();
-        let Some(texture) = texture else {
-            ui.allocate_ui_with_layout(
-                available,
-                egui::Layout::centered_and_justified(egui::Direction::TopDown),
-                |ui| {
-                    ui.label(empty);
-                },
-            );
-            return;
-        };
-        let Some(image) = image else {
-            return;
-        };
-        egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-            let available = ui.available_size();
-            let natural = egui::vec2(image.width as f32, image.height as f32);
-            let scale = (available.x / natural.x)
-                .min((available.y - 24.0).max(1.0) / natural.y)
+        if let (Some(texture), Some(image)) = (texture, image) {
+            let image_size = egui::vec2(image.width as f32, image.height as f32);
+            let scale = (available.x / image_size.x)
+                .min(available.y / image_size.y)
                 .min(1.0)
-                .max(0.03);
-            let size = natural * scale;
-            ui.vertical_centered(|ui| {
+                .max(0.01);
+            let size = image_size * scale;
+            ui.centered_and_justified(|ui| {
                 ui.add(egui::Image::new(texture).fit_to_exact_size(size));
-                ui.small(format!("{} × {} px", image.width, image.height));
             });
-        });
+        } else {
+            ui.centered_and_justified(|ui| {
+                ui.label(unavailable);
+            });
+        }
     });
+}
+
+fn load_texture(ctx: &egui::Context, name: &str, image: &RgbaImage) -> egui::TextureHandle {
+    let color = egui::ColorImage::from_rgba_unmultiplied([image.width, image.height], &image.pixels);
+    ctx.load_texture(name, color, egui::TextureOptions::LINEAR)
 }
