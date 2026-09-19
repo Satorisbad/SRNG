@@ -13,7 +13,7 @@ rm -rf "$APP"
 mkdir -p "$MACOS" "$RESOURCES"
 install -m755 "$ROOT/studio/target/release/srng-studio" "$MACOS/srng-studio"
 install -m644 "$ROOT/packaging/macos/Info.plist" "$CONTENTS/Info.plist"
-install -m644 "$ROOT/packaging/icons/hicolor/scalable/apps/srng-studio.svg" "$RESOURCES/srng-studio.svg"
+install -m644 "$ROOT/packaging/macos/srng-studio.icns" "$RESOURCES/srng-studio.icns"
 
 printf 'Created %s\n' "$APP"
 printf 'Signing/notarization intentionally not performed.\n'
