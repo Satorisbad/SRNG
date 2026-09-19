@@ -41,6 +41,7 @@ jobs:
       - name: Validate packaging scripts
         run: |
           bash -n packaging/linux/install-user.sh
+          bash -n packaging/linux/install-bundle.sh
           bash -n packaging/macos/package-app.sh
       - name: Package Linux ARM64 bundle
         if: matrix.platform == 'linux'
@@ -49,6 +50,7 @@ jobs:
           root="$PWD/dist/srng-studio-linux-aarch64"
           mkdir -p "$root/bin" "$root/share/applications" "$root/share/mime/packages" "$root/share/icons/hicolor/scalable/apps"
           install -m755 studio/target/release/srng-studio "$root/bin/srng-studio"
+          install -m755 packaging/linux/install-bundle.sh "$root/install.sh"
           install -m644 packaging/linux/srng-studio.desktop "$root/share/applications/srng-studio.desktop"
           install -m644 packaging/linux/srng.xml "$root/share/mime/packages/srng.xml"
           install -m644 packaging/icons/hicolor/scalable/apps/srng-studio.svg "$root/share/icons/hicolor/scalable/apps/srng-studio.svg"
