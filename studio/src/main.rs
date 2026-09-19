@@ -2,6 +2,7 @@ use eframe::egui;
 use srng_studio::{convert_svg, render_srng, write_png, RgbaImage, StudioDiagnostic};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime};
 
 fn main() -> eframe::Result<()> {
     let initial = std::env::args().nth(1).map(PathBuf::from);
@@ -44,6 +45,10 @@ struct StudioApp {
     rendered_texture: Option<egui::TextureHandle>,
     status: String,
     info_tab: InfoTab,
+    preview_zoom: f32,
+    watch_file: bool,
+    last_modified: Option<SystemTime>,
+    last_watch_check: Instant,
 }
 
 impl StudioApp {
@@ -61,6 +66,10 @@ impl StudioApp {
             rendered_texture: None,
             status: "Drop an SRNG or SVG file anywhere in the window, or choose Open.".to_string(),
             info_tab: InfoTab::Diagnostics,
+            preview_zoom: 1.0,
+            watch_file: false,
+            last_modified: None,
+            last_watch_check: Instant::now(),
         };
         if let Some(path) = initial {
             app.load_path(&path, &cc.egui_ctx);
@@ -91,6 +100,8 @@ impl StudioApp {
                     SourceKind::Svg => self.load_svg_text(source, name, Some(path.to_path_buf()), ctx),
                     SourceKind::Srng => self.load_srng_text(source, name, Some(path.to_path_buf()), ctx),
                 }
+                self.last_modified = modified_time(path);
+                self.preview_zoom = 1.0;
             }
             Err(error) => {
                 self.status = format!("Could not open {}: {error}", path.display());
@@ -167,7 +178,11 @@ impl StudioApp {
         self.diagnostics = diagnostics;
         self.refresh_rendered_texture(ctx);
         self.status = if self.rendered_image.is_some() {
-            "Rendered the current SRNG text.".to_string()
+            if self.diagnostics.iter().any(|d| d.severity == "warning") {
+                "Rendered with warnings. See Diagnostics.".to_string()
+            } else {
+                "Rendered the current SRNG text.".to_string()
+            }
         } else {
             "SRNG render failed. See Diagnostics.".to_string()
         };
@@ -209,7 +224,18 @@ impl StudioApp {
         }
         if let Some(path) = dialog.save_file() {
             match fs::write(&path, &self.srng_source) {
-                Ok(()) => self.status = format!("Saved {}", path.display()),
+                Ok(()) => {
+                    self.status = format!("Saved {}", path.display());
+                    if self.source_kind == Some(SourceKind::Srng) {
+                        self.path = Some(path.clone());
+                        self.source_name = path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or("untitled.srng")
+                            .to_string();
+                        self.last_modified = modified_time(&path);
+                    }
+                }
                 Err(error) => self.status = format!("Could not save {}: {error}", path.display()),
             }
         }
@@ -240,6 +266,24 @@ impl StudioApp {
             self.load_path(&path, ctx);
         } else {
             self.status = "Current source has no file path to reload.".to_string();
+        }
+    }
+
+    fn check_file_watch(&mut self, ctx: &egui::Context) {
+        if !self.watch_file || self.last_watch_check.elapsed() < Duration::from_millis(750) {
+            return;
+        }
+        self.last_watch_check = Instant::now();
+
+        let Some(path) = self.path.clone() else {
+            return;
+        };
+        let modified = modified_time(&path);
+        if modified.is_some() && modified != self.last_modified {
+            self.load_path(&path, ctx);
+            if self.source_kind.is_some() {
+                self.status = format!("Auto-reloaded {} after a disk change.", self.source_name);
+            }
         }
     }
 
@@ -308,6 +352,7 @@ impl StudioApp {
 impl eframe::App for StudioApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_dropped_files(ctx);
+        self.check_file_watch(ctx);
         let dragging_files = ctx.input(|input| !input.raw.hovered_files.is_empty());
 
         egui::TopBottomPanel::top("toolbar")
@@ -327,6 +372,10 @@ impl eframe::App for StudioApp {
                     {
                         self.reload_current(ctx);
                     }
+                    ui.add_enabled_ui(self.path.is_some(), |ui| {
+                        ui.checkbox(&mut self.watch_file, "Watch")
+                            .on_hover_text("Automatically reload when the file changes on disk");
+                    });
                     if ui
                         .add_enabled(!self.svg_source.is_empty(), egui::Button::new("Convert SVG"))
                         .on_hover_text("Convert the current SVG source to SRNG")
@@ -354,6 +403,8 @@ impl eframe::App for StudioApp {
                     {
                         self.save_png();
                     }
+                    ui.separator();
+                    zoom_controls(ui, &mut self.preview_zoom);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let name = if self.source_kind.is_none() {
                             "No file loaded"
@@ -463,6 +514,7 @@ impl eframe::App for StudioApp {
                                         self.original_texture.as_ref(),
                                         self.original_image.as_ref(),
                                         "SVG preview unavailable.",
+                                        self.preview_zoom,
                                     );
                                 },
                             );
@@ -477,6 +529,7 @@ impl eframe::App for StudioApp {
                                         self.rendered_texture.as_ref(),
                                         self.rendered_image.as_ref(),
                                         "SRNG preview unavailable.",
+                                        self.preview_zoom,
                                     );
                                 },
                             );
@@ -489,12 +542,13 @@ impl eframe::App for StudioApp {
                         egui::vec2(ui.available_width(), preview_height),
                         egui::Layout::top_down(egui::Align::LEFT),
                         |ui| {
-                            panel_header(ui, "SRNG Render", "Native SRNG document preview");
+                            panel_header(ui, "SRNG Render", "Native SRNG document preview; scroll to pan");
                             preview_panel(
                                 ui,
                                 self.rendered_texture.as_ref(),
                                 self.rendered_image.as_ref(),
                                 "SRNG preview unavailable.",
+                                self.preview_zoom,
                             );
                         },
                     );
@@ -567,6 +621,23 @@ fn source_kind_from_extension(ext: &str) -> Option<SourceKind> {
     }
 }
 
+fn modified_time(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).ok()?.modified().ok()
+}
+
+fn zoom_controls(ui: &mut egui::Ui, zoom: &mut f32) {
+    if ui.small_button("-").on_hover_text("Zoom out").clicked() {
+        *zoom = (*zoom / 1.25).clamp(0.1, 8.0);
+    }
+    ui.label(format!("{:.0}%", *zoom * 100.0));
+    if ui.small_button("+").on_hover_text("Zoom in").clicked() {
+        *zoom = (*zoom * 1.25).clamp(0.1, 8.0);
+    }
+    if ui.small_button("Fit").on_hover_text("Reset preview zoom").clicked() {
+        *zoom = 1.0;
+    }
+}
+
 fn panel_header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
     ui.horizontal_wrapped(|ui| {
         ui.label(egui::RichText::new(title).strong().size(17.0));
@@ -580,19 +651,29 @@ fn preview_panel(
     texture: Option<&egui::TextureHandle>,
     image: Option<&RgbaImage>,
     unavailable: &str,
+    zoom: f32,
 ) {
     egui::Frame::group(ui.style()).show(ui, |ui| {
         let available = ui.available_size();
         if let (Some(texture), Some(image)) = (texture, image) {
             let image_size = egui::vec2(image.width as f32, image.height as f32);
-            let scale = (available.x / image_size.x)
+            let fit = (available.x / image_size.x)
                 .min(available.y / image_size.y)
                 .min(1.0)
                 .max(0.01);
-            let size = image_size * scale;
-            ui.centered_and_justified(|ui| {
-                ui.add(egui::Image::new(texture).fit_to_exact_size(size));
-            });
+            let size = image_size * (fit * zoom).clamp(0.01, 8.0);
+            egui::ScrollArea::both()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let remaining = ui.available_size();
+                    let pad_x = ((remaining.x - size.x) * 0.5).max(0.0);
+                    let pad_y = ((remaining.y - size.y) * 0.5).max(0.0);
+                    ui.add_space(pad_y);
+                    ui.horizontal(|ui| {
+                        ui.add_space(pad_x);
+                        ui.add(egui::Image::new(texture).fit_to_exact_size(size));
+                    });
+                });
         } else {
             ui.centered_and_justified(|ui| {
                 ui.label(unavailable);
