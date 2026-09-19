@@ -31,6 +31,20 @@ fn normalize_integrated_resources(svg: &str, source: &mut String) {
     }).collect::<HashMap<_, _>>();
 
     let lines = source.lines().collect::<Vec<_>>();
+    let mut direct_paths = HashMap::<String, String>::new();
+    let mut scan = 0usize;
+    while scan < lines.len() {
+        let trimmed = lines[scan].trim();
+        if trimmed.ends_with('{') && !trimmed.starts_with("relation ") {
+            let id = trimmed.trim_end_matches('{').split_whitespace().nth(1).unwrap_or("").to_string();
+            let mut block = Vec::<String>::new();
+            scan += 1;
+            while scan < lines.len() && lines[scan].trim() != "}" { block.push(lines[scan].to_string()); scan += 1; }
+            if let Some(data) = property_value(&block, "data") { direct_paths.insert(id, data); }
+        }
+        scan += 1;
+    }
+
     let mut out = String::with_capacity(source.len() + 512);
     let mut i = 0usize;
     while i < lines.len() {
@@ -44,6 +58,10 @@ fn normalize_integrated_resources(svg: &str, source: &mut String) {
             if let Some(rest) = trimmed.strip_prefix("reference ") {
                 let id = rest.split_whitespace().next().unwrap_or("");
                 if let Some(fill) = fills.get(id) { set_property(&mut block, "fill", fill); }
+                if let Some(target) = property_value(&block, "resource-target") {
+                    let target = target.trim_matches('"');
+                    if let Some(data) = direct_paths.get(target) { set_property(&mut block, "data", data); }
+                }
             }
 
             if let Some(pattern_id) = property_value(&block, "pattern-ref").or_else(|| property_value(&block, "svg-pattern-ref")) {
@@ -58,25 +76,16 @@ fn normalize_integrated_resources(svg: &str, source: &mut String) {
                     let quoted = quote_srng(&meta.source);
                     set_property(&mut block, "pattern-source", &quoted);
                     set_property(&mut block, "svg-pattern-source-xml", &quoted);
-                    if meta.object_content {
-                        block.retain(|line| !line.trim_start().starts_with("pattern-data:"));
-                    }
+                    if meta.object_content { block.retain(|line| !line.trim_start().starts_with("pattern-data:")); }
                 }
             }
 
             for line in &mut block {
-                if line.contains("xlink:") && !line.contains("xmlns:xlink") && (line.contains("<defs") || line.contains("<pattern")) {
-                    *line = inject_xlink_namespace_in_escaped_property(line);
-                }
+                if line.contains("xlink:") && !line.contains("xmlns:xlink") && (line.contains("<defs") || line.contains("<pattern")) { *line = inject_xlink_namespace_in_escaped_property(line); }
             }
 
             let binary_mask = property_value(&block, "mask-mode").or_else(|| property_value(&block, "svg-mask-mode")).is_some_and(|v| v.trim_matches('"') == "binary-opaque-clip");
-            if binary_mask {
-                block.retain(|line| {
-                    let t = line.trim_start();
-                    !t.starts_with("mask-data:") && !t.starts_with("mask-type:")
-                });
-            }
+            if binary_mask { block.retain(|line| { let t = line.trim_start(); !t.starts_with("mask-data:") && !t.starts_with("mask-type:") }); }
 
             out.push_str(header); out.push('\n');
             for line in block { out.push_str(&line); out.push('\n'); }
@@ -90,10 +99,7 @@ fn normalize_integrated_resources(svg: &str, source: &mut String) {
 
 fn standalone_xml(xml:&str)->String {
     if xml.contains("xlink:") && !xml.contains("xmlns:xlink") {
-        if let Some(pos)=xml.find('>') {
-            let mut out=String::with_capacity(xml.len()+50);
-            out.push_str(&xml[..pos]); out.push_str(" xmlns:xlink=\"http://www.w3.org/1999/xlink\""); out.push_str(&xml[pos..]); return out;
-        }
+        if let Some(pos)=xml.find('>') { let mut out=String::with_capacity(xml.len()+50); out.push_str(&xml[..pos]); out.push_str(" xmlns:xlink=\"http://www.w3.org/1999/xlink\""); out.push_str(&xml[pos..]); return out; }
     }
     xml.to_string()
 }
@@ -118,6 +124,7 @@ mod tests{
 use super::*;
 #[test]fn use_without_fill_gets_svg_default_black(){let svg="<svg xmlns='http://www.w3.org/2000/svg'><defs><g id='item'><rect width='3' height='4'/></g></defs><use id='plain' href='#item'/></svg>";let result=import_svg(svg,"test.svg",&ImportOptions::default());let block=result.source.split("reference plain").nth(1).unwrap_or("");assert!(block.split('}').next().unwrap_or("").contains("fill: #000000;"),"{}",result.source);}
 #[test]fn explicit_none_is_not_replaced(){let svg="<svg xmlns='http://www.w3.org/2000/svg'><defs><rect id='item' width='1' height='1'/></defs><use id='plain' href='#item' fill='none'/></svg>";let result=import_svg(svg,"test.svg",&ImportOptions::default());let block=result.source.split("reference plain").nth(1).unwrap_or("");assert!(block.split('}').next().unwrap_or("").contains("fill: none;"),"{}",result.source);}
+#[test]fn direct_path_reference_keeps_instance_path_without_flattening_group_resources(){let svg="<svg xmlns='http://www.w3.org/2000/svg'><defs><path id='p' d='M0 0 L2 0 L2 2 Z'/><g id='g'><path d='M0 0 L1 0 L1 1 Z'/></g></defs><use id='path_use' href='#p'/><use id='group_use' href='#g'/></svg>";let result=import_svg(svg,"test.svg",&ImportOptions::default());let path_block=result.source.split("reference path_use").nth(1).unwrap_or("").split('}').next().unwrap_or("");let group_block=result.source.split("reference group_use").nth(1).unwrap_or("").split('}').next().unwrap_or("");assert!(path_block.contains("data:"),"{}",result.source);assert!(!group_block.contains("data:"),"group resources must remain structured references: {}",result.source);}
 #[test]fn integrated_pattern_keeps_positive_dimensions(){let svg="<svg xmlns='http://www.w3.org/2000/svg'><defs><pattern id='p' width='4' height='5'><rect width='4' height='5' fill='red'/></pattern></defs><rect width='8' height='8' fill='url(#p)'/></svg>";let result=import_svg(svg,"test.svg",&ImportOptions::default());assert!(result.source.contains("pattern-width: 4;"));assert!(result.source.contains("pattern-height: 5;"));}
 #[test]fn object_bbox_content_uses_safe_svg_fallback(){let svg="<svg xmlns='http://www.w3.org/2000/svg'><defs><pattern id='p' patternContentUnits='objectBoundingBox' width='1' height='1'><rect width='.5' height='1'/></pattern></defs><rect width='8' height='8' fill='url(#p)'/></svg>";let result=import_svg(svg,"test.svg",&ImportOptions::default());assert!(!result.source.contains("pattern-data:"));assert!(result.source.contains("pattern-source:"));}
 }
