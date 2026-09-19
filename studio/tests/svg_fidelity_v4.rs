@@ -93,7 +93,7 @@ fn advanced_scene_survives_svg_provenance_strip() {
     assert!(stripped.contains("gradient-kind:"));
     assert!(stripped.contains("transform:"));
     assert!(stripped.contains("reference "), "native reusable content must remain a first-class reference: {stripped}");
-    assert!(stripped.contains("resource-target:"), "reference target identity must survive provenance stripping: {stripped}");
+    assert!(stripped.contains("= \"#p\""), "reference target identity must survive provenance stripping in native reference syntax: {stripped}");
     let (rendered, diagnostics) = render_srng(&stripped, "native-v4.srng");
     assert!(!diagnostics.iter().any(|d| d.severity == "error"), "{diagnostics:?}");
     let image = rendered.expect("native v4 SRNG should render");
