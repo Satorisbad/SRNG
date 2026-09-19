@@ -3,6 +3,7 @@ pub mod diagnostic;
 pub mod ir;
 pub mod lexer;
 pub mod parser;
+pub mod text_shaping;
 #[path = "svg_import.rs"]
 mod svg_import_impl;
 #[path = "svg.rs"]
