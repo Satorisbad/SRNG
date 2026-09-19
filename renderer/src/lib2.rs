@@ -6,6 +6,7 @@ mod semantic_v5;
 mod semantic_v6;
 mod semantic_v7;
 pub mod filter;
+pub mod font;
 #[cfg(feature = "cpu")]
 mod filter_cpu;
 
