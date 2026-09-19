@@ -1,4 +1,4 @@
-use crate::{Command, EmbeddedImage, FillRule, FilterOp, GradientSpread, LineCap, LineJoin, Paint, PreparedScene, RenderDiagnostic, Rgba, VectorRecord};
+use crate::{Command, EmbeddedImage, FillRule, GradientSpread, LineCap, LineJoin, Paint, PreparedScene, RenderDiagnostic, Rgba, VectorRecord};
 use kurbo::{Affine, BezPath, Cap, Join, Shape, Stroke as KurboStroke};
 use peniko::{color::{AlphaColor, Srgb}, ColorStop, ColorStops, Extend, Fill, Gradient, ImageQuality};
 use std::{collections::HashMap, fmt, io::Cursor};
@@ -44,10 +44,6 @@ impl GpuResourceStore {
     pub fn len(&self)->usize{ self.textures.len() }
 }
 
-#[derive(Debug, Clone)]
-pub struct FilterExecutionRequest { pub operations:Vec<FilterOp>, pub width:u32, pub height:u32 }
-pub trait GpuFilterExecutor { fn execute(&mut self, request:&FilterExecutionRequest, source:&GpuTexture, device:&Device, queue:&Queue, encoder:&mut CommandEncoder)->Result<GpuTexture,String>; }
-
 #[derive(Debug)]
 pub struct GpuRenderer { renderer:HybridRenderer, resources:Resources, target_width:u32, target_height:u32, target_format:TextureFormat, resource_store:GpuResourceStore }
 impl GpuRenderer {
@@ -77,7 +73,7 @@ fn render_range(context:&mut HybridScene,commands:&[Command],device:&Device,queu
     let mut i=0usize;
     while i<commands.len(){ match &commands[i] {
         Command::PushMask{records}=>{ let end=matching_end(commands,i,|c|matches!(c,Command::PushMask{..}),|c|matches!(c,Command::PopMask),"mask")?; render_masked_block(context,&commands[i+1..end],records,device,queue,resources,diagnostics,width,height)?; i=end+1; }
-        Command::PushFilter{filters}=>{ let end=matching_end(commands,i,|c|matches!(c,Command::PushFilter{..}),|c|matches!(c,Command::PopFilter),"filter")?; diagnostics.push(RenderDiagnostic{severity:"warning".into(),code:"G630".into(),message:format!("GPU filter execution boundary received {} operation(s); native FilterGraph execution is delegated to filter-graph-v0.6, rendering unfiltered content deterministically",filters.len()),declaration:None}); render_range(context,&commands[i+1..end],device,queue,resources,diagnostics,width,height)?; i=end+1; }
+        Command::PushFilter{graph}=>{ let end=matching_end(commands,i,|c|matches!(c,Command::PushFilter{..}),|c|matches!(c,Command::PopFilter),"filter")?; diagnostics.push(RenderDiagnostic{severity:"warning".into(),code:"G630".into(),message:format!("GPU filter execution boundary received {} graph node(s); rendering unfiltered content deterministically because GPU FilterGraph execution is not implemented",graph.nodes.len()),declaration:None}); render_range(context,&commands[i+1..end],device,queue,resources,diagnostics,width,height)?; i=end+1; }
         Command::PopMask=>return Err("encountered unmatched mask terminator".into()), Command::PopFilter=>return Err("encountered unmatched filter terminator".into()),
         command=>{apply_gpu(context,command,device,queue,resources,width,height)?; i+=1;}
     }} Ok(())
@@ -137,7 +133,6 @@ fn rasterize_pattern_records(records:&[VectorRecord],tile_width:f64,tile_height:
 
 fn rasterize_svg(svg:&str,tile_width:f64,tile_height:f64)->Result<(Vec<u8>,u32,u32),String>{use resvg::{tiny_skia,usvg};let options=usvg::Options::default();let tree=usvg::Tree::from_str(svg,&options).map_err(|e|format!("invalid SVG pattern: {e}"))?;let width=tile_width.ceil().clamp(1.0,4096.0)as u32;let height=tile_height.ceil().clamp(1.0,4096.0)as u32;let mut pixmap=tiny_skia::Pixmap::new(width,height).ok_or_else(||"could not allocate SVG pattern pixmap".to_string())?;let size=tree.size();resvg::render(&tree,tiny_skia::Transform::from_scale(width as f32/size.width(),height as f32/size.height()),&mut pixmap.as_mut());Ok((pixmap.data().to_vec(),width,height))}
 fn rasterize_svg_image(svg:&str)->Result<(Vec<u8>,u32,u32),String>{use resvg::{tiny_skia,usvg};let options=usvg::Options::default();let tree=usvg::Tree::from_str(svg,&options).map_err(|e|format!("invalid embedded SVG: {e}"))?;let size=tree.size();let width=size.width().ceil().clamp(1.0,4096.0)as u32;let height=size.height().ceil().clamp(1.0,4096.0)as u32;let mut pixmap=tiny_skia::Pixmap::new(width,height).ok_or_else(||"could not allocate embedded SVG pixmap".to_string())?;resvg::render(&tree,tiny_skia::Transform::from_scale(width as f32/size.width(),height as f32/size.height()),&mut pixmap.as_mut());Ok((pixmap.data().to_vec(),width,height))}
-
 fn decode_data_image(uri:&str)->Result<(Vec<u8>,u32,u32),String>{let(rest,payload)=uri.split_once(',').ok_or_else(||"invalid data image URI".to_string())?;let mime=rest.strip_prefix("data:").unwrap_or(rest).split(';').next().unwrap_or("");let bytes=if rest.contains(";base64"){decode_base64(payload)?}else{percent_decode(payload)?};match mime{"image/png"=>decode_png(&bytes),"image/svg+xml"=>{let text=std::str::from_utf8(&bytes).map_err(|_|"embedded SVG is not UTF-8".to_string())?;rasterize_svg_image(text)},other=>Err(format!("unsupported embedded image type `{other}`; GPU backend supports PNG and SVG data images"))}}
 fn decode_png(bytes:&[u8])->Result<(Vec<u8>,u32,u32),String>{let decoder=png::Decoder::new(Cursor::new(bytes));let mut reader=decoder.read_info().map_err(|e|format!("invalid embedded PNG: {e}"))?;let mut buf=vec![0;reader.output_buffer_size()];let info=reader.next_frame(&mut buf).map_err(|e|format!("could not decode embedded PNG: {e}"))?;let src=&buf[..info.buffer_size()];let mut out=vec![0;(info.width as usize)*(info.height as usize)*4];match info.color_type{png::ColorType::Rgba=>out.copy_from_slice(src),png::ColorType::Rgb=>for(dst,s)in out.chunks_exact_mut(4).zip(src.chunks_exact(3)){dst[0]=s[0];dst[1]=s[1];dst[2]=s[2];dst[3]=255;},png::ColorType::Grayscale=>for(dst,&v)in out.chunks_exact_mut(4).zip(src){dst[0]=v;dst[1]=v;dst[2]=v;dst[3]=255;},png::ColorType::GrayscaleAlpha=>for(dst,s)in out.chunks_exact_mut(4).zip(src.chunks_exact(2)){dst[0]=s[0];dst[1]=s[0];dst[2]=s[0];dst[3]=s[1];},png::ColorType::Indexed=>return Err("indexed embedded PNG must be expanded by decoder".into())}premultiply_rgba(&mut out);Ok((out,info.width,info.height))}
 fn premultiply_rgba(pixels:&mut[u8]){for p in pixels.chunks_exact_mut(4){let a=u16::from(p[3]);p[0]=((u16::from(p[0])*a+127)/255)as u8;p[1]=((u16::from(p[1])*a+127)/255)as u8;p[2]=((u16::from(p[2])*a+127)/255)as u8;}}
