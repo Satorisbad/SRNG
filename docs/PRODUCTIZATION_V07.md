@@ -1,48 +1,71 @@
 # SRNG Productization v0.7
 
-This phase turns the integrated compiler/runtime/renderer into a desktop product.
+This phase turns the integrated compiler/runtime/renderer into the first complete desktop-facing SRNG product layer.
 
 ## Native file behavior
 
 SRNG Studio accepts a path as its first process argument. `.srng` files are read as UTF-8 SRNG source and rendered directly. `.svg` files retain the SVG import/compare workflow. Unknown extensions are rejected with a user-facing status message.
 
-The file dialog and drag/drop surface both formats. A loaded `.srng` can be reloaded from disk and saved without an SVG conversion step.
+The file dialog and drag/drop surface both formats. A loaded `.srng` can be saved directly, manually reloaded, or watched for disk changes and automatically reloaded. Direct SRNG viewing never requires an SVG conversion step.
+
+The native preview provides fit/reset plus bounded zoom controls and two-axis scrolling for panning large/zoomed documents. Diagnostics remain visible independently of the editable source panel.
 
 ## Linux desktop integration
 
 `packaging/linux/srng.xml` registers `application/x-srng` for `*.srng`.
 
-`packaging/linux/srng-studio.desktop` declares SRNG Studio as a viewer for that MIME type and launches it with the selected file path.
+`packaging/linux/srng-studio.desktop` declares SRNG Studio as a viewer/editor for that MIME type and launches it with the selected file path.
 
-`packaging/linux/install-user.sh` builds the native release executable, installs it under `~/.local/bin`, installs the desktop and MIME declarations, refreshes databases when their tools are present, and sets SRNG Studio as the default SRNG handler when `xdg-mime` is available.
+`packaging/linux/install-user.sh` builds the native release executable, installs it under `~/.local/bin`, installs the desktop/MIME declarations and scalable application icon, refreshes available desktop databases, and sets SRNG Studio as the default SRNG handler when `xdg-mime` is available.
 
-The final double-click behavior must still be smoke-tested on the target Omarchy desktop because repository CI cannot reproduce the user's file manager/session configuration.
+CI also produces a self-contained Linux ARM64 release archive containing the executable and integration metadata.
+
+## macOS integration
+
+`packaging/macos/Info.plist` declares the SRNG document UTI (`dev.srng.graphics`), `.srng` filename extension, `application/x-srng` MIME type, bundle identity, and native application icon.
+
+`packaging/macos/package-app.sh` creates a reproducible unsigned `SRNG Studio.app` bundle. CI packages that application as a macOS ARM64 ZIP. Signing and notarization are deliberately separate because they require release credentials.
+
+## Tooling
+
+The repository exposes a complete basic tooling surface:
+
+- `srngc --check` validates SRNG without writing IR;
+- `srngc` compiles source to SRNG-IR JSON;
+- `srngfmt` formats or checks source conservatively;
+- `srng-svg` imports SVG to SRNG;
+- `srngr` executes runtime scene resolution;
+- renderer tooling performs raster rendering;
+- SRNG Studio provides the desktop view/edit workflow.
+
+The v1 compatibility boundary is frozen in `docs/V1_RELEASE_CONTRACT.md`; detailed tool usage is in `docs/TOOLING.md`.
+
+## Torture and resilience testing
+
+The productization integration suite directly tests native SRNG rendering, malformed source recovery, repeated deterministic renders, deep relationship chains, a 100-node scene, complex SVG resource chains, and corrupt embedded image input.
+
+The persistent `tests/torture/` corpus adds malformed SRNG, deep relationships, chained clip/mask/filter/reference SVG, Unicode text across multiple scripts, corrupt image data, and cyclic `<use>` references.
+
+Failures are expected to produce bounded diagnostics rather than panic, hang, or silently corrupt unrelated rendering. Existing renderer revision gating remains the cancellation/stale-revision mechanism.
 
 ## CI and release artifacts
 
-Studio CI checks and tests the workspace and builds release binaries on native Linux ARM64 and macOS ARM64 runners. Successful runs upload the native `srng-studio` executable as an artifact.
+Studio CI runs compiler/tooling checks and tests, Studio checks and tests, release builds, packaging-script syntax validation, and platform packaging on native Linux ARM64 and macOS ARM64 runners.
 
-## Torture testing
+Successful runs upload:
 
-Repository torture fixtures live under `tests/torture/`. They are intended to grow into a corpus covering:
+- `srng-studio-linux-aarch64.tar.gz`
+- `srng-studio-macos-aarch64.zip`
 
-- deep relationship/reference graphs;
-- malformed source and malformed resources;
-- large scenes and images;
-- Unicode and font shaping;
-- image -> mask -> filter -> clip -> reference combinations;
-- repeated render/reload cycles;
-- cancellation and stale-revision rejection.
+The normal compiler/runtime CI and renderer CI continue to run independently so desktop changes cannot hide lower-layer regressions.
 
-Failures must produce bounded diagnostics rather than panic, hang, or silently corrupt unrelated rendering.
+## Repository-side completion boundary
 
-## Release boundary
+Repository-side productization is complete when compiler/runtime CI, renderer CI, Studio Linux ARM64 CI, and Studio macOS ARM64 CI all pass and both release artifacts are produced.
 
-Repository-only work can verify compilation, automated tests, artifact generation and package metadata. These remain target-machine acceptance tests:
+The following checks inherently require a real target desktop or private release credentials and are therefore outside repository-only completion:
 
-1. Wayland/Hyprland launch.
-2. File-manager `.srng` double-click association.
-3. MIME/icon presentation.
-4. Real interactive zoom/pan/reload behavior.
-5. M2 8 GB sustained memory/thermal behavior.
-6. macOS signing/notarization when release credentials exist.
+1. Omarchy/Hyprland launch and file-manager `.srng` double-click behavior.
+2. Actual desktop MIME/icon presentation after installation.
+3. Sustained interactive memory/thermal behavior on the target M2 8 GB machine.
+4. macOS signing/notarization and Gatekeeper validation when release credentials exist.
