@@ -139,7 +139,7 @@ mod limits_tests {
     #[test]
     fn rejects_excessive_canvas_before_raster_allocation() {
         let source = imported_srng(
-            r#"<svg xmlns="http://www.w3.org/2000/svg" width="50000" height="50000"><rect width="10" height="10" fill="#fff"/></svg>"#,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="50000" height="50000"><rect width="10" height="10" fill="#fff"/></svg>"##,
             "huge.svg",
         );
         let (image, diagnostics) = render_srng(&source, "huge.srng");
@@ -153,7 +153,7 @@ mod limits_tests {
     #[test]
     fn accepts_normal_render_budget() {
         let source = imported_srng(
-            r#"<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="480" fill="#fff"/></svg>"#,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="480" fill="#fff"/></svg>"##,
             "normal.svg",
         );
         let (image, diagnostics) = render_srng(&source, "normal.srng");
