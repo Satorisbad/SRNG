@@ -20,9 +20,9 @@ cargo run --manifest-path studio/Cargo.toml
 
 The renderer derives its viewport from the first active SRNG canvas unless `--viewport WIDTHxHEIGHT` is supplied.
 
-## Native mappings
+## v0.5 native mappings
 
-The importer/runtime/renderer stack covers:
+The importer/runtime/renderer stack now covers:
 
 - `<svg>` canvas geometry, root `viewBox`, and `preserveAspectRatio`
 - `<g>` / `<symbol>` hierarchy through explicit `contains` relations
@@ -36,7 +36,7 @@ The importer/runtime/renderer stack covers:
 - native repeating vector patterns using SRNG vector records, with legacy v0.4 pattern provenance readable only as backward compatibility
 - standalone embedded `data:image/png` and `data:image/svg+xml` images on the CPU renderer, including meet/slice/none aspect-ratio behavior
 - local `<use href="#id">` references to supported vector shapes, including nested aliases and cycle-safe local resolution
-- native CPU filter graphs for `feGaussianBlur`, `feOffset`, `feBlend`, `feComposite`, `feColorMatrix`, `feFlood`, `feMerge`, `feMorphology`, and practical `feComponentTransfer`
+- native `feGaussianBlur` and `feOffset` filter operations on the CPU renderer
 - imported text content and common font metadata, with deterministic vector fallback including anchors, size, weight, italic/oblique, letter spacing, word spacing, tabs, line height, and multiline layout
 
 ## First-class resource semantics
@@ -48,12 +48,11 @@ Supported features are lowered into normal SRNG fields and renderer command type
 - `clip`
 - `gradient-kind`, `gradient-units`, `gradient-transform`, `gradient-spread`, gradient coordinates, focal radius, and stops
 - `image-data`, image placement, and `image-preserve-aspect-ratio`
-- `filter-graph`, `filter-units`, `filter-primitive-units`, and filter region fields
-- legacy `filter-chain`, accepted as v0.5 compatibility input and lowered into the same graph model
+- `filter-chain`
 - `href`, `use-data`, `use-fill`, `use-stroke`
 - text/font/spacing fields
 
-`svg-*` properties are provenance. `--native` output removes them. Verification rejects semantic code that reintroduces temporary `<gradient>`, `<text>`, `<image>`, `<mask>`, `<pattern>`, or `<filter>` reconstruction for supported native features.
+`svg-*` properties are provenance. `--native` output removes them. The v0.5 verification script rejects semantic code that reintroduces temporary `<gradient>`, `<text>`, `<image>`, `<mask>`, `<pattern>`, or `<filter>` reconstruction for supported native features.
 
 ## Masks and clipping
 
@@ -69,7 +68,7 @@ Supported vector pattern children are native vector records and repeat through t
 
 Text remains semantic SRNG content. Pre-shaped outline `data` is rendered exactly as normal vector geometry. When outlines are absent, v0.5 uses a deterministic built-in vector fallback for Latin letters, digits, common punctuation, and a visible unsupported-character glyph.
 
-The fallback handles common layout metadata but is not a production font shaper. Exact authored fonts, OpenType shaping, kerning, ligatures, bidi layout, variable fonts, and full complex-script Unicode typography require the separate text subsystem.
+The fallback handles common layout metadata but is not a production font shaper. Exact authored fonts, OpenType shaping, kerning, ligatures, bidi layout, variable fonts, and full complex-script Unicode typography require a dedicated text subsystem.
 
 ## Images and `<use>`
 
@@ -79,27 +78,21 @@ Local `<use>` references to supported vector shapes are expanded into native geo
 
 ## Filters
 
-v0.6 uses a backend-neutral `FilterGraph`. Every primitive has an explicit typed operation and a named output. SVG `result="name"`, `in`, and `in2` become native graph references. `SourceGraphic` is the isolated RGBA rendering of the filtered element; `SourceAlpha` preserves only that source alpha.
-
-The CPU backend executes Gaussian blur, offset, normal/multiply/screen/darken/lighten blend modes, Porter-Duff composite modes plus arithmetic composite, 4x5 color matrices, flood, merge, morphology, and identity/table/discrete/linear/gamma component-transfer functions. SVG color-matrix `saturate`, `hueRotate`, and `luminanceToAlpha` are lowered into native matrices by the importer.
-
-Filter `x`, `y`, `width`, `height`, and `filterUnits` are retained and resolved to a clipping region. Unsupported primitives remain explicit nodes and produce `S360`/`G241` diagnostics. CPU execution explicitly bypasses the unsupported node by forwarding its declared input, preserving named-result routing and unrelated scene rendering rather than silently inventing an effect.
-
-See `docs/FILTER_GRAPH_V06.md` for the native graph grammar and execution contract.
+`feGaussianBlur` and `feOffset` are represented as typed native filter operations and execute in isolated CPU layers. Unsupported primitives remain warnings/errors rather than being approximated silently. Full SVG filter result graphs, morphology, turbulence, displacement, lighting, component transfer, complex blend/composite routing, and other graph-scale semantics remain future filter-engine work.
 
 ## CPU/GPU behavior
 
-CPU is the reference backend for the v0.6 filter graph. The graph representation is deliberately independent of CPU rendering so a GPU implementation can consume the same nodes later. GPU filter parity is not required for the v0.6 filter milestone.
+CPU is the v0.5 reference backend for masks, patterns, embedded images, and filters. GPU directly supports vector paths plus solid, linear, and radial gradient paints including focal radius and spread modes. Texture-upload/offscreen operations currently emit explicit GPU diagnostics rather than incorrect approximations.
 
 ## Fault tolerance and remaining boundaries
 
 Conversion is diagnostic-first. Unsupported SVG semantics are preserved when possible and reported rather than discarded.
 
-Remaining boundaries include:
+Remaining boundaries are subsystem-scale:
 
 - production-grade font discovery/shaping/outlining across fonts and scripts
+- the complete SVG filter graph and intermediate-result model
 - GPU texture/offscreen parity for masks, patterns, images, and filters
-- filter primitives not yet implemented, including turbulence, displacement, convolve-matrix, lighting, tile, and image-based filter inputs
 - additional embedded raster codecs beyond PNG
 - arbitrary external/network resource loading, intentionally disabled by the security model
 - the most advanced SVG compositing and paint-server combinations outside the tested native resource model
