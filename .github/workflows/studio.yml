@@ -48,12 +48,13 @@ jobs:
         run: |
           set -euo pipefail
           root="$PWD/dist/srng-studio-linux-aarch64"
-          mkdir -p "$root/bin" "$root/share/applications" "$root/share/mime/packages" "$root/share/icons/hicolor/scalable/apps"
+          mkdir -p "$root/bin" "$root/share/applications" "$root/share/mime/packages" "$root/share/icons/hicolor/scalable/apps" "$root/share/icons/hicolor/scalable/mimetypes"
           install -m755 studio/target/release/srng-studio "$root/bin/srng-studio"
           install -m755 packaging/linux/install-bundle.sh "$root/install.sh"
           install -m644 packaging/linux/srng-studio.desktop "$root/share/applications/srng-studio.desktop"
           install -m644 packaging/linux/srng.xml "$root/share/mime/packages/srng.xml"
           install -m644 packaging/icons/hicolor/scalable/apps/srng-studio.svg "$root/share/icons/hicolor/scalable/apps/srng-studio.svg"
+          install -m644 packaging/icons/hicolor/scalable/mimetypes/application-x-srng.svg "$root/share/icons/hicolor/scalable/mimetypes/application-x-srng.svg"
           tar -C dist -czf dist/srng-studio-linux-aarch64.tar.gz srng-studio-linux-aarch64
       - name: Package macOS ARM64 app
         if: matrix.platform == 'macos'
