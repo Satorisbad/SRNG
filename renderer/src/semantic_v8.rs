@@ -26,4 +26,18 @@ fn unquote(value:&str)->String{let value=value.trim();value.strip_prefix('"').an
 fn quote(value:&str)->String{format!("\"{}\"",value.replace('\\',"\\\\").replace('"',"\\\""))}
 fn fmt(value:f64)->String{if value.fract().abs()<1e-9{format!("{}",value as i64)}else{format!("{value:.6}").trim_end_matches('0').trim_end_matches('.').to_string()}}
 fn diag(severity:&str,code:&str,message:&str,id:&str)->RenderDiagnostic{RenderDiagnostic{severity:severity.into(),code:code.into(),message:message.into(),declaration:Some(id.into())}}
-#[cfg(test)]mod tests{use super::*;use srng::runtime::{execute_json,RuntimeOptions};#[test]fn native_image_geometry_survives_normalization(){let source=r#"srng 0.1; group image { position: 2px 3px; size: 8px 9px; image-data: \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lC9pWQAAAABJRU5ErkJggg==\"; }"#;let ir=srng::compile_to_json(source,"native-image.srng");let scene=execute_json(&ir,&RuntimeOptions::default()).unwrap();let gate=RevisionGate::default();let revision=gate.begin();let prepared=prepare_scene(&scene,revision,&gate);assert!(prepared.commands.iter().any(|c|matches!(c,crate::Command::DrawImage{image}if image.width==8.0&&image.height==9.0)));}#[test]fn external_image_is_rejected_without_rendering_placeholder(){let source=r#"srng 0.1; group image { position: 0px 0px; size: 10px 10px; href: \"https://example.com/a.png\"; }"#;let ir=srng::compile_to_json(source,"external.srng");let scene=execute_json(&ir,&RuntimeOptions::default()).unwrap();let gate=RevisionGate::default();let revision=gate.begin();let prepared=prepare_scene(&scene,revision,&gate);assert!(prepared.diagnostics.iter().any(|d|d.code=="G260"));assert!(!prepared.commands.iter().any(|c|matches!(c,crate::Command::DrawImage{..})));}}
+#[cfg(test)]mod tests{use super::*;use srng::runtime::{execute_json,RuntimeOptions};#[test]fn native_image_geometry_survives_normalization(){let source=r#"
+srng 0.1;
+group image {
+    position: 2px 3px;
+    size: 8px 9px;
+    image-data: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lC9pWQAAAABJRU5ErkJggg==";
+}
+"#;let ir=srng::compile_to_json(source,"native-image.srng");let scene=execute_json(&ir,&RuntimeOptions::default()).unwrap();let gate=RevisionGate::default();let revision=gate.begin();let prepared=prepare_scene(&scene,revision,&gate);assert!(prepared.commands.iter().any(|c|matches!(c,crate::Command::DrawImage{image}if image.width==8.0&&image.height==9.0)),"{:?}",prepared.diagnostics);}#[test]fn external_image_is_rejected_without_rendering_placeholder(){let source=r#"
+srng 0.1;
+group image {
+    position: 0px 0px;
+    size: 10px 10px;
+    href: "https://example.com/a.png";
+}
+"#;let ir=srng::compile_to_json(source,"external.srng");let scene=execute_json(&ir,&RuntimeOptions::default()).unwrap();let gate=RevisionGate::default();let revision=gate.begin();let prepared=prepare_scene(&scene,revision,&gate);assert!(prepared.diagnostics.iter().any(|d|d.code=="G260"));assert!(!prepared.commands.iter().any(|c|matches!(c,crate::Command::DrawImage{..})));}}
