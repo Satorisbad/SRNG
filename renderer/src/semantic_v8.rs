@@ -31,7 +31,7 @@ srng 0.1;
 group image {
     position: 2px 3px;
     size: 8px 9px;
-    image-data: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lC9pWQAAAABJRU5ErkJggg==";
+    image-data: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 }
 "#;let ir=srng::compile_to_json(source,"native-image.srng");let scene=execute_json(&ir,&RuntimeOptions::default()).unwrap();let gate=RevisionGate::default();let revision=gate.begin();let prepared=prepare_scene(&scene,revision,&gate);assert!(prepared.commands.iter().any(|c|matches!(c,crate::Command::DrawImage{image}if image.width==8.0&&image.height==9.0)),"{:?}",prepared.diagnostics);}#[test]fn external_image_is_rejected_without_rendering_placeholder(){let source=r#"
 srng 0.1;
