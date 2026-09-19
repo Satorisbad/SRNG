@@ -1,6 +1,9 @@
 use srng::runtime::{execute_file, execute_json, RuntimeOptions};
 use std::fs;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn run(source: &str) -> srng::runtime::Scene {
     let ir = srng::compile_to_json(source, "test.srng");
@@ -9,7 +12,8 @@ fn run(source: &str) -> srng::runtime::Scene {
 
 fn temp_dir() -> std::path::PathBuf {
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    let path = std::env::temp_dir().join(format!("srng-regression-{}-{nonce}", std::process::id()));
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!("srng-regression-{}-{nonce}-{sequence}", std::process::id()));
     fs::create_dir_all(&path).unwrap();
     path
 }
