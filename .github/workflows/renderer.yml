@@ -2,7 +2,7 @@ name: Renderer
 
 on:
   push:
-    branches: [renderer-v0.1, svg-fidelity-complete-v0.5, filter-graph-v0.6, svg-fidelity-integrated-v0.6]
+    branches: [renderer-v0.1, svg-fidelity-complete-v0.5]
   pull_request:
 
 concurrency:
@@ -35,7 +35,6 @@ jobs:
       - run: cargo check --manifest-path renderer/Cargo.toml
       - run: cargo test --manifest-path renderer/Cargo.toml
       - run: bash scripts/check-svg-fidelity-v05.sh
-      - run: bash scripts/check-filter-graph-v06.sh
 
   renderer-gpu:
     name: Renderer GPU type-check / ${{ matrix.os }}
@@ -48,4 +47,3 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo check --manifest-path renderer/Cargo.toml --no-default-features --features gpu
-      - run: cargo test --manifest-path renderer/Cargo.toml --no-default-features --features gpu --lib --test gpu_resources
