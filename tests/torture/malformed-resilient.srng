@@ -1,0 +1,13 @@
+srng 0.1;
+file "malformed-resilient";
+
+canvas root { size: 640px 480px; }
+rect valid { position: 20px 20px; size: 200px 120px; fill: #4f7cff; }
+relation root -> valid {}
+
+// Deliberately invalid declaration used to verify diagnostics do not crash tooling.
+rect broken {
+  position: nope;
+  size: 100px;
+  fill: #zzzzzz;
+}
