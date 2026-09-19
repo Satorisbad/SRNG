@@ -10,12 +10,21 @@ cargo build --release --manifest-path studio/Cargo.toml
 
 The executable is `studio/target/release/srng-studio`.
 
-## Application bundle contract
+## Create the application bundle
 
-A release bundle should install the executable as:
+```sh
+bash packaging/macos/package-app.sh
+```
 
-`SRNG Studio.app/Contents/MacOS/srng-studio`
+This creates `dist/SRNG Studio.app` with:
 
-The bundle must declare `.srng` as an imported document type and pass the opened file path as the first process argument. SRNG Studio already accepts that argument and opens `.srng` directly.
+- the native `srng-studio` executable;
+- `Info.plist` bundle metadata;
+- `.srng` document type / `dev.srng.graphics` UTI registration;
+- the native `srng-studio.icns` application icon.
 
-Signing, notarization and Gatekeeper validation require release credentials and therefore are intentionally outside repository-only CI.
+SRNG Studio accepts a `.srng` or `.svg` path as its first process argument, which is the portable command-line/file-launch contract used by the application. LaunchServices document-open behavior remains a target-macOS acceptance test because it is delivered by the desktop event system rather than repository CI.
+
+CI packages the unsigned application as `srng-studio-macos-aarch64.zip`.
+
+Signing, notarization and Gatekeeper validation require private Apple release credentials and are intentionally outside repository-only CI.
