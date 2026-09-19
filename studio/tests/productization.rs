@@ -1,4 +1,4 @@
-use srng_studio::{render_srng, RgbaImage};
+use srng_studio::{convert_svg, render_srng, RgbaImage};
 
 fn assert_nonempty(image: &RgbaImage) {
     assert!(image.width > 0);
@@ -95,4 +95,50 @@ relation d -> e { kind: contains; }
         "{diagnostics:?}"
     );
     assert_nonempty(image.as_ref().expect("deep scene should render"));
+}
+
+#[test]
+fn hundred_node_scene_renders_without_unbounded_output() {
+    let mut source = String::from("srng 0.1;\nfile \"large\";\ncanvas root { size: 512px 512px; }\n");
+    for index in 0..100 {
+        let x = (index % 10) * 48 + 4;
+        let y = (index / 10) * 48 + 4;
+        source.push_str(&format!(
+            "rect n{index} {{ position: {x}px {y}px; size: 40px 40px; fill: #4f7cff; }}\nrelation root -> n{index} {{ kind: contains; }}\n"
+        ));
+    }
+
+    let (image, diagnostics) = render_srng(&source, "large.srng");
+    assert!(diagnostics.len() < 512, "diagnostics must stay bounded");
+    let image = image.expect("100-node scene should render");
+    assert_eq!((image.width, image.height), (512, 512));
+    assert_nonempty(&image);
+}
+
+#[test]
+fn complex_svg_resource_chain_is_resilient() {
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="96" height="64">
+      <defs>
+        <clipPath id="clip"><rect x="4" y="4" width="88" height="56" rx="8"/></clipPath>
+        <mask id="mask"><rect width="96" height="64" fill="white"/><circle cx="48" cy="32" r="12" fill="#777"/></mask>
+        <filter id="filter"><feGaussianBlur stdDeviation="1"/><feOffset dx="1" dy="1" result="o"/><feBlend in="SourceGraphic" in2="o" mode="screen"/></filter>
+        <g id="tile"><rect width="16" height="16" fill="#4f7cff"/><circle cx="8" cy="8" r="4" fill="#fff"/></g>
+      </defs>
+      <g clip-path="url(#clip)" mask="url(#mask)" filter="url(#filter)">
+        <use href="#tile" x="8" y="8"/>
+        <use href="#tile" x="32" y="24" transform="rotate(12 40 32)"/>
+        <text x="8" y="58">SRNG مرحبا שלום नमस्ते</text>
+      </g>
+    </svg>"##;
+
+    let outcome = convert_svg(svg, "resource-chain.svg");
+    assert!(outcome.diagnostics.len() < 512, "diagnostics must stay bounded");
+    assert!(!outcome.srng.is_empty(), "import must still produce SRNG source");
+}
+
+#[test]
+fn corrupt_embedded_image_does_not_crash_conversion() {
+    let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><image width="32" height="32" href="data:image/png;base64,not-valid-base64!!!"/></svg>"#;
+    let outcome = convert_svg(svg, "corrupt-image.svg");
+    assert!(outcome.diagnostics.len() < 128, "diagnostics must stay bounded");
 }
