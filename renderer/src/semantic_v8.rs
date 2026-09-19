@@ -73,6 +73,7 @@ fn format_number(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use srng::runtime::{execute_json, RuntimeOptions};
 
     #[test]
     fn native_image_geometry_is_bridged_to_source_geometry() {
@@ -84,7 +85,8 @@ group image {
     image-data: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lC9pWQAAAABJRU5ErkJggg==";
 }
 "#;
-        let scene = srng::parse(source).expect("scene should parse");
+        let ir = srng::compile_to_json(source, "native-image-regression.srng");
+        let scene = execute_json(&ir, &RuntimeOptions::default()).expect("runtime scene");
         let gate = RevisionGate::default();
         let revision = gate.begin();
         let prepared = prepare_scene(&scene, revision, &gate);
