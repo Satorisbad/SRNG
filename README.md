@@ -1,78 +1,113 @@
 # SRNG
 
-SRNG is a relationship-first vector format intended as a programmable alternative to SVG.
+SRNG is a relationship-first vector graphics format and native rendering stack designed for precise programmatic and agentic editing without flattening scene semantics.
 
-This repository contains the first reference compiler, `srngc`, and runtime, `srngr`, written in Rust.
+The repository contains the SRNG compiler/runtime, SVG importer, CPU/GPU renderer, tooling, and SRNG Studio desktop application.
 
-## What v0.1 supports
+## Current product surface
 
-- Custom SRNG syntax with an explicit `srng 0.1;` header
-- Open-ended vector node kinds (`rect`, `path`, `text`, `stroke`, `gap`, `shadow`, components, etc.)
-- Explicit positions and arbitrary vector properties
-- Built-in and custom units
-- First-class relationships between ids
-- Cross-file `.srng#id` references with provenance preserved
-- Reference-only animation/state declarations
-- Fault-tolerant parsing: valid content survives broken content
-- Diagnostics stored in emitted IR rather than rendered visually
-- JSON IR suitable for future renderers and editors
+- Native `.srng` source format with explicit relationships and reusable resources.
+- Fault-tolerant compiler and diagnostics.
+- Runtime scene resolution.
+- CPU renderer and GPU resource path with deterministic fallback.
+- SVG import including resource references, images, masks, filters, gradients, and text architecture.
+- Font loading and text shaping infrastructure.
+- Native SRNG Studio for opening, rendering, editing, reloading, watching, zooming/panning, and exporting SRNG documents.
+- Linux desktop/MIME integration and macOS application-bundle metadata.
+- Validation, formatting, conversion, runtime, and rendering command-line tools.
 
-## Platform support
+## Source compatibility
 
-The compiler is designed to build natively on:
+The first product release is SRNG v1. The current source grammar header remains:
 
-- Omarchy / Arch Linux (`x86_64` and `aarch64`)
-- macOS on Apple Silicon (`aarch64`)
-- macOS on Intel (`x86_64`)
+```srng
+srng 0.1;
+```
 
-The v0.1 compiler uses only Rust's standard library, so it has no native library dependencies. See [`docs/PLATFORMS.md`](docs/PLATFORMS.md).
+The source compatibility contract is defined in [`docs/SPEC.md`](docs/SPEC.md) and frozen for the v1 product release in [`docs/V1_RELEASE_CONTRACT.md`](docs/V1_RELEASE_CONTRACT.md).
 
 ## Build
 
-```bash
+Compiler/runtime/tooling:
+
+```sh
 cargo build --release
 ```
 
-The compiler binary is `target/release/srngc`. To install it into your Cargo bin directory, run:
+Studio:
 
-```bash
-sh scripts/install.sh
+```sh
+cargo build --release --manifest-path studio/Cargo.toml
 ```
 
-## Compile
+Renderer:
 
-```bash
-cargo run -- examples/basic.srng
+```sh
+cargo build --release --manifest-path renderer/Cargo.toml
 ```
 
-That produces `examples/basic.srng.json`. To print IR directly:
+## Open an SRNG document
 
-```bash
-cargo run -- examples/basic.srng --stdout
+```sh
+cargo run --manifest-path studio/Cargo.toml -- examples/basic.srng
 ```
 
-Or choose an output path:
+`.srng` files are rendered directly. SVG files can also be opened for import/comparison.
 
-```bash
-cargo run -- examples/basic.srng -o build/basic.json
+## Linux desktop install
+
+```sh
+bash packaging/linux/install-user.sh
 ```
 
-The compiler still emits IR when syntax or semantic errors are present, but exits with status `1`. This is intentional: editors/renderers can keep using the valid remainder while surfacing the broken section.
+This installs the native Studio executable into `~/.local/bin`, registers `application/x-srng`, installs the desktop launcher and icon, and associates `.srng` files with SRNG Studio when the desktop provides the standard XDG tools.
 
-## Tests
+## Validate
 
-```bash
-cargo test
+```sh
+cargo run --bin srngc -- examples/basic.srng --check
 ```
 
-See [`docs/SPEC.md`](docs/SPEC.md) for the v0.1 compiler surface.
+## Compile to IR
 
-## Runtime
+```sh
+cargo run --bin srngc -- examples/basic.srng -o build/basic.json
+```
 
-The runtime consumes compiler IR and produces a resolved, renderer-neutral scene:
+Use `--stdout` instead of `-o` to print IR.
 
-```bash
+## Format
+
+```sh
+cargo run --bin srngfmt -- examples/basic.srng --check
+cargo run --bin srngfmt -- examples/basic.srng --write
+```
+
+## Convert SVG
+
+```sh
+cargo run --bin srng-svg -- source.svg -o source.srng
+```
+
+## Runtime scene
+
+```sh
 cargo run --bin srngr -- examples/basic.srng --stdout
 ```
 
-It resolves units, geometry, relationships, and cross-file references while preserving diagnostics and reference provenance. It does not draw pixels; the renderer is the next layer. See [`docs/RUNTIME.md`](docs/RUNTIME.md).
+## Tests
+
+```sh
+cargo test --workspace
+cargo test --manifest-path studio/Cargo.toml
+cargo test --manifest-path renderer/Cargo.toml
+```
+
+The productization torture corpus and desktop/release boundary are documented in [`docs/PRODUCTIZATION_V07.md`](docs/PRODUCTIZATION_V07.md). Tool details are in [`docs/TOOLING.md`](docs/TOOLING.md).
+
+## Platform targets
+
+- Omarchy / Arch Linux ARM64 and x86_64.
+- macOS Apple Silicon and Intel where dependencies support the target.
+
+Repository CI verifies portable compiler/runtime/renderer behavior and desktop builds. Actual file-manager association, Wayland/Hyprland behavior, thermal behavior, and signed/notarized macOS distribution require target-machine or release-credential validation.
