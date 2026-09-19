@@ -1,5 +1,5 @@
 use srng::runtime::{execute_json, RuntimeOptions};
-use srng_renderer::{prepare_scene, Command, FilterOp, GradientSpread, Paint, RevisionGate};
+use srng_renderer::{prepare_scene, Command, FilterPrimitive, GradientSpread, Paint, RevisionGate};
 
 fn scene(source: &str) -> srng::runtime::Scene {
     let ir = srng::compile_to_json(source, "native-svg-v05.srng");
@@ -75,8 +75,11 @@ rect filtered {
     let prepared = prepare_scene(&scene(source), revision, &gate);
     assert!(prepared.commands.iter().any(|command| matches!(
         command,
-        Command::PushFilter { filters }
-            if matches!(filters.as_slice(), [FilterOp::GaussianBlur { .. }, FilterOp::Offset { .. }])
+        Command::PushFilter { graph }
+            if matches!(graph.nodes.as_slice(), [
+                srng_renderer::FilterNode { op: FilterPrimitive::GaussianBlur { .. }, .. },
+                srng_renderer::FilterNode { op: FilterPrimitive::Offset { .. }, .. }
+            ])
     )));
     assert!(prepared.commands.iter().any(|command| matches!(command, Command::PopFilter)));
 }
@@ -88,12 +91,12 @@ srng 0.1;
 group image {
     position: 2px 3px;
     size: 8px 9px;
-    image-data: "data:image/png;base64,iVBORw0KGgo=";
+    image-data: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
     image-preserve-aspect-ratio: "xMidYMid meet";
 }
 "#;
     let gate = RevisionGate::default();
     let revision = gate.begin();
     let prepared = prepare_scene(&scene(source), revision, &gate);
-    assert!(prepared.commands.iter().any(|command| matches!(command, Command::DrawImage { image } if image.width == 8.0 && image.height == 9.0)));
+    assert!(prepared.commands.iter().any(|command| matches!(command, Command::DrawImage { image } if image.width == 8.0 && image.height == 9.0)), "{:?}", prepared.diagnostics);
 }

@@ -30,8 +30,7 @@ fn inherited_group_and_fill_opacity_are_applied() {
 #[test]
 fn linear_gradient_paints_natively() {
     let image = render(r##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="4"><defs><linearGradient id="g"><stop offset="0" stop-color="#ff0000"/><stop offset="1" stop-color="#0000ff"/></linearGradient></defs><rect width="20" height="4" fill="url(#g)"/></svg>"##);
-    let left = rgba_at(&image, 1, 2);
-    let right = rgba_at(&image, 18, 2);
+    let left = rgba_at(&image, 1, 2); let right = rgba_at(&image, 18, 2);
     assert!(left[0] > left[2], "left should be red-dominant: {left:?}");
     assert!(right[2] > right[0], "right should be blue-dominant: {right:?}");
 }
@@ -39,8 +38,7 @@ fn linear_gradient_paints_natively() {
 #[test]
 fn radial_gradient_renders() {
     let image = render(r##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><defs><radialGradient id="g"><stop offset="0" stop-color="#ff0000"/><stop offset="1" stop-color="#0000ff"/></radialGradient></defs><rect width="20" height="20" fill="url(#g)"/></svg>"##);
-    let center = rgba_at(&image, 10, 10);
-    let edge = rgba_at(&image, 1, 1);
+    let center = rgba_at(&image, 10, 10); let edge = rgba_at(&image, 1, 1);
     assert!(center[0] > center[2], "center should be red-dominant: {center:?}");
     assert!(edge[2] > edge[0], "edge should be blue-dominant: {edge:?}");
 }
@@ -55,8 +53,7 @@ fn luminance_mask_uses_luminance_not_source_alpha() {
 #[test]
 fn object_bounding_box_clip_scales_to_target() {
     let image = render(r##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><defs><clipPath id="c" clipPathUnits="objectBoundingBox"><rect width="0.5" height="1"/></clipPath></defs><rect width="20" height="10" fill="#00ff00" clip-path="url(#c)"/></svg>"##);
-    assert!(rgba_at(&image, 3, 5)[3] > 180);
-    assert!(rgba_at(&image, 17, 5)[3] < 30);
+    assert!(rgba_at(&image, 3, 5)[3] > 180); assert!(rgba_at(&image, 17, 5)[3] < 30);
 }
 
 #[test]
@@ -95,7 +92,8 @@ fn advanced_scene_survives_svg_provenance_strip() {
     assert!(!stripped.lines().any(|line| line.trim_start().starts_with("svg-")));
     assert!(stripped.contains("gradient-kind:"));
     assert!(stripped.contains("transform:"));
-    assert!(stripped.contains("use-data:"));
+    assert!(stripped.contains("reference "), "native reusable content must remain a first-class reference: {stripped}");
+    assert!(stripped.contains("= \"#p\""), "reference target identity must survive provenance stripping in native reference syntax: {stripped}");
     let (rendered, diagnostics) = render_srng(&stripped, "native-v4.srng");
     assert!(!diagnostics.iter().any(|d| d.severity == "error"), "{diagnostics:?}");
     let image = rendered.expect("native v4 SRNG should render");

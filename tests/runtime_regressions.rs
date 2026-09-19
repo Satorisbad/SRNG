@@ -1,6 +1,9 @@
 use srng::runtime::{execute_file, execute_json, RuntimeOptions};
 use std::fs;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn run(source: &str) -> srng::runtime::Scene {
     let ir = srng::compile_to_json(source, "test.srng");
@@ -9,9 +12,18 @@ fn run(source: &str) -> srng::runtime::Scene {
 
 fn temp_dir() -> std::path::PathBuf {
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    let path = std::env::temp_dir().join(format!("srng-regression-{}-{nonce}", std::process::id()));
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!("srng-regression-{}-{nonce}-{sequence}", std::process::id()));
     fs::create_dir_all(&path).unwrap();
     path
+}
+
+fn cleanup_temp_dir(path: impl AsRef<std::path::Path>) {
+    match fs::remove_dir_all(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => panic!("failed to clean SRNG regression temp directory: {error}"),
+    }
 }
 
 #[test]
@@ -33,7 +45,7 @@ fn rejects_cross_file_reference_cycles() {
     let scene = execute_file(dir.join("a.srng"), &RuntimeOptions::default()).unwrap();
     assert!(!scene.references[0].resolved);
     assert!(scene.diagnostics.iter().any(|d| d.code == "R234"));
-    fs::remove_dir_all(dir).unwrap();
+    cleanup_temp_dir(dir);
 }
 
 #[test]
@@ -62,7 +74,7 @@ fn linked_geometry_and_provenance_are_retained() {
     assert_eq!(reference.linked_geometry.as_ref().unwrap().x, Some(16.0));
     assert_eq!(reference.linked_geometry.as_ref().unwrap().height, Some(40.0));
     assert_eq!(reference.linked_properties.get("fill").map(String::as_str), Some("#ffffff"));
-    fs::remove_dir_all(dir).unwrap();
+    cleanup_temp_dir(dir);
 }
 
 #[test]

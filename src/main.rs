@@ -16,6 +16,7 @@ fn main() {
 
     let mut output: Option<PathBuf> = None;
     let mut stdout = false;
+    let mut check = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-o" | "--output" => {
@@ -26,12 +27,18 @@ fn main() {
                 output = Some(PathBuf::from(path));
             }
             "--stdout" => stdout = true,
+            "--check" => check = true,
             other => {
                 eprintln!("srngc: unknown argument `{other}`");
                 usage();
                 std::process::exit(2);
             }
         }
+    }
+
+    if check && (stdout || output.is_some()) {
+        eprintln!("srngc: --check cannot be combined with --stdout or --output");
+        std::process::exit(2);
     }
 
     let source = match fs::read_to_string(&input) {
@@ -57,6 +64,19 @@ fn main() {
         );
     }
 
+    let has_errors = document
+        .diagnostics
+        .iter()
+        .any(|d| matches!(d.severity, srng::diagnostic::Severity::Error));
+
+    if check {
+        if has_errors {
+            std::process::exit(1);
+        }
+        println!("valid {input}");
+        return;
+    }
+
     if stdout {
         println!("{json}");
     } else {
@@ -68,16 +88,11 @@ fn main() {
         println!("compiled {} -> {}", input, output.display());
     }
 
-    let has_errors = document
-        .diagnostics
-        .iter()
-        .any(|d| matches!(d.severity, srng::diagnostic::Severity::Error));
-
     if has_errors {
         std::process::exit(1);
     }
 }
 
 fn usage() {
-    eprintln!("Usage: srngc <input.srng> [-o output.json] [--stdout]");
+    eprintln!("Usage: srngc <input.srng> [-o output.json] [--stdout] [--check]");
 }

@@ -2,7 +2,7 @@ name: Studio
 
 on:
   push:
-    branches: [svg-studio-v0.1]
+    branches: [svg-studio-v0.1, productization-v0.7]
   pull_request:
 
 concurrency:
@@ -15,12 +15,58 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-24.04-arm
+            artifact: srng-studio-linux-aarch64
+            platform: linux
+          - os: macos-14
+            artifact: srng-studio-macos-aarch64
+            platform: macos
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Check native app
-        run: cargo check --manifest-path studio/Cargo.toml
-      - name: Test conversion and render pipeline
-        run: cargo test --manifest-path studio/Cargo.toml
+      - name: Check compiler and tooling
+        run: cargo check --all-targets
+      - name: Test compiler and tooling
+        run: cargo test --all-targets
+      - name: Check Studio
+        run: cargo check --manifest-path studio/Cargo.toml --all-targets
+      - name: Test Studio
+        run: cargo test --manifest-path studio/Cargo.toml --all-targets
+      - name: Build Studio release
+        run: cargo build --release --manifest-path studio/Cargo.toml
+      - name: Verify release binary
+        run: test -x studio/target/release/srng-studio
+      - name: Validate packaging scripts
+        run: |
+          bash -n packaging/linux/install-user.sh
+          bash -n packaging/linux/install-bundle.sh
+          bash -n packaging/macos/package-app.sh
+      - name: Package Linux ARM64 bundle
+        if: matrix.platform == 'linux'
+        run: |
+          set -euo pipefail
+          root="$PWD/dist/srng-studio-linux-aarch64"
+          mkdir -p "$root/bin" "$root/share/applications" "$root/share/mime/packages" "$root/share/icons/hicolor/scalable/apps" "$root/share/icons/hicolor/scalable/mimetypes"
+          install -m755 studio/target/release/srng-studio "$root/bin/srng-studio"
+          install -m755 packaging/linux/install-bundle.sh "$root/install.sh"
+          install -m644 packaging/linux/srng-studio.desktop "$root/share/applications/srng-studio.desktop"
+          install -m644 packaging/linux/srng.xml "$root/share/mime/packages/srng.xml"
+          install -m644 packaging/icons/hicolor/scalable/apps/srng-studio.svg "$root/share/icons/hicolor/scalable/apps/srng-studio.svg"
+          install -m644 packaging/icons/hicolor/scalable/mimetypes/application-x-srng.svg "$root/share/icons/hicolor/scalable/mimetypes/application-x-srng.svg"
+          tar -C dist -czf dist/srng-studio-linux-aarch64.tar.gz srng-studio-linux-aarch64
+      - name: Package macOS ARM64 app
+        if: matrix.platform == 'macos'
+        run: |
+          set -euo pipefail
+          bash packaging/macos/package-app.sh "$PWD/dist"
+          ditto -c -k --sequesterRsrc --keepParent "dist/SRNG Studio.app" "dist/srng-studio-macos-aarch64.zip"
+          plutil -lint "dist/SRNG Studio.app/Contents/Info.plist"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
