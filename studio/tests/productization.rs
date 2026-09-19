@@ -1,10 +1,21 @@
 use srng_studio::{convert_svg, render_srng, RgbaImage};
+use std::fs;
+use std::path::PathBuf;
 
 fn assert_nonempty(image: &RgbaImage) {
     assert!(image.width > 0);
     assert!(image.height > 0);
     assert_eq!(image.pixels.len(), image.width * image.height * 4);
     assert!(image.pixels.iter().any(|byte| *byte != 0));
+}
+
+fn torture_path(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("studio must live below repository root")
+        .join("tests")
+        .join("torture")
+        .join(name)
 }
 
 #[test]
@@ -141,4 +152,26 @@ fn corrupt_embedded_image_does_not_crash_conversion() {
     let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><image width="32" height="32" href="data:image/png;base64,not-valid-base64!!!"/></svg>"#;
     let outcome = convert_svg(svg, "corrupt-image.svg");
     assert!(outcome.diagnostics.len() < 128, "diagnostics must stay bounded");
+}
+
+#[test]
+fn persistent_torture_corpus_is_bounded_and_non_panicking() {
+    for name in ["deep-nesting.srng", "malformed-resilient.srng"] {
+        let source = fs::read_to_string(torture_path(name)).expect("torture SRNG fixture should be readable");
+        let result = std::panic::catch_unwind(|| render_srng(&source, name));
+        let (_image, diagnostics) = result.unwrap_or_else(|_| panic!("render panicked for {name}"));
+        assert!(diagnostics.len() < 1024, "diagnostics exploded for {name}");
+    }
+
+    for name in [
+        "resource-chain.svg",
+        "unicode-text.svg",
+        "corrupt-image.svg",
+        "cyclic-use.svg",
+    ] {
+        let source = fs::read_to_string(torture_path(name)).expect("torture SVG fixture should be readable");
+        let result = std::panic::catch_unwind(|| convert_svg(&source, name));
+        let outcome = result.unwrap_or_else(|_| panic!("conversion panicked for {name}"));
+        assert!(outcome.diagnostics.len() < 1024, "diagnostics exploded for {name}");
+    }
 }
